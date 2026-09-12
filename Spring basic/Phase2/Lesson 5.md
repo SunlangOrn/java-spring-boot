@@ -1,134 +1,70 @@
-# 📘 Phase 2, Lesson 5: DTOs (Data Transfer Objects)
+# 📘 Phase 2, Lesson 5: Accepting JSON Data (`@RequestBody`)
 
-## 📋 Table of Contents
-- [Learning Goals](#-learning-goals)
-- [The Problem](#-the-problem)
-- [The Restaurant Menu Analogy](#-the-restaurant-menu-analogy)
-- [Step-by-Step Build](#-step-by-step-build)
-- [Run and Test](#-run-and-test)
-- [Exercise](#-exercise)
-- [Quiz](#-quiz)
+## 🎯 Learning Goal
+- ✅ Understand the difference between `@RequestParam` and `@RequestBody`.
+- ✅ Learn how to receive complex JSON data from the client.
+- ✅ Convert JSON into a Java Object automatically.
 
 ---
 
-## 🎯 Learning Goals
-- ✅ Understand why we never expose Entities directly to clients
-- ✅ Create Request and Response DTOs
-- ✅ Manually map between Entity and DTO
+## 💡 The Concept: URL Params vs. JSON Body
+In Lesson 4, we created a product like this:
+`POST /api/products?name=Laptop&price=999.99`
 
----
+This uses **Query Parameters** (`@RequestParam`). It's fine for 2 or 3 simple fields. 
+But what if a product has a name, price, description, stock, category, and images? The URL would be massive!
 
-## 🚨 The Problem
-
-Right now, your controller returns the `Product` **Entity** directly:
-```java
-@GetMapping("/{id}")
-public ResponseEntity<Product> getProductById(@PathVariable Long id) {
-    return ResponseEntity.ok(productService.getProductById(id));
-}
-```
-
-**Why is this dangerous?**
-
-### Problem 1: Security
-If you later add a `password` field to a `User` entity, it gets exposed automatically in the API response!
-
-### Problem 2: Database Changes Break the API
-If you rename `price` to `unitPrice` in the database, the API response changes from `{"price": 29.99}` to `{"unitPrice": 29.99}`. Every client breaks!
-
-### Problem 3: You Can't Customize
-What if you want to format the price as `"$29.99"`? You can't, because the Entity stores a `Double`.
-
----
-
-## 🍽️ The Restaurant Menu Analogy
-
-- **Kitchen (Entity)**: Has raw ingredients (all database columns)
-- **Menu (DTO)**: Shows only what the customer needs to see
-
-The customer doesn't need to know how much salt the chef used. They just need to see "Grilled Chicken - $15.99".
+In the real world, we send complex data in the **Body** of the HTTP request as **JSON**.
 
 ---
 
 ## 🛠️ Step-by-Step Build
 
-### Step 1: Create the Response DTO
+### Step 1: Create a Request Object
+We need a class to hold the incoming JSON data. Create a new package called `dto` (Data Transfer Object) and add this:
+
 ```java
-// src/main/java/com/example/product/dto/response/ProductResponse.java
-package com.example.product.dto.response;
+// src/main/java/com/example/demo/dto/ProductRequest.java
+package com.example.demo.dto;
 
-import lombok.*;
-
-@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
-public class ProductResponse {
-    private Long id;
-    private String name;
-    private Double price;
-    // Only the fields the client needs to see!
-    // No database annotations here.
-}
+// We use a record again because it's just holding data coming from the client
+public record ProductRequest(String name, Double price) {}
 ```
 
-### Step 2: Create the Request DTO
-```java
-// src/main/java/com/example/product/dto/request/ProductCreateRequest.java
-package com.example.product.dto.request;
+### Step 2: Update the Service
+Update `ProductService.java` to accept the DTO instead of raw strings:
 
-import lombok.*;
-
-@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
-public class ProductCreateRequest {
-    private String name;
-    private Double price;
-    // No ID field — the database generates it!
-}
-```
-
-### Step 3: Manual Mapping in the Service
 ```java
 // In ProductService.java
-public ProductResponse createProduct(ProductCreateRequest request) {
-    // 1. Convert Request DTO → Entity
-    Product product = Product.builder()
-            .name(request.getName())
-            .price(request.getPrice())
-            .build();
+import com.example.demo.dto.ProductRequest;
 
-    // 2. Save to database
-    Product saved = productRepository.save(product);
+// ... inside the class ...
 
-    // 3. Convert Entity → Response DTO
-    return ProductResponse.builder()
-            .id(saved.getId())
-            .name(saved.getName())
-            .price(saved.getPrice())
-            .build();
-}
-
-public ProductResponse getProductById(Long id) {
-    Product product = productRepository.findById(id).orElse(null);
-    if (product == null) return null;
-
-    return ProductResponse.builder()
-            .id(product.getId())
-            .name(product.getName())
-            .price(product.getPrice())
-            .build();
+public Product addProduct(ProductRequest request) {
+    Long newId = (long) (products.size() + 1); 
+    
+    // Extract data from the request object
+    Product newProduct = new Product(newId, request.name(), request.price());
+    
+    products.add(newProduct);
+    return newProduct;
 }
 ```
 
-### Step 4: Update the Controller
-```java
-@PostMapping
-public ResponseEntity<ProductResponse> createProduct(
-        @RequestBody ProductCreateRequest request) {  // Accept DTO, not Entity!
-    return ResponseEntity.status(HttpStatus.CREATED)
-            .body(productService.createProduct(request));
-}
+### Step 3: Update the Controller to use `@RequestBody`
+Update `ProductController.java`:
 
-@GetMapping("/{id}")
-public ResponseEntity<ProductResponse> getProductById(@PathVariable Long id) {
-    return ResponseEntity.ok(productService.getProductById(id));
+```java
+// In ProductController.java
+import com.example.demo.dto.ProductRequest;
+
+// ... inside the class ...
+
+@PostMapping
+public Product addProduct(@RequestBody ProductRequest request) {
+    // @RequestBody tells Spring: 
+    // "Look at the raw JSON in the HTTP body, convert it to a ProductRequest object, and give it to me."
+    return productService.addProduct(request);
 }
 ```
 
@@ -136,35 +72,55 @@ public ResponseEntity<ProductResponse> getProductById(@PathVariable Long id) {
 
 ## 🚀 Run and Test
 
-```bash
-./mvnw spring-boot:run
-```
+Restart your app.
 
+**Test: Add a product using JSON**
 ```bash
-curl -X POST http://localhost:8080/api/products \
+curl -X POST http://localhost:8081/api/products \
 -H "Content-Type: application/json" \
--d '{"name": "Mouse", "price": 29.99}'
+-d '{
+  "name": "Wireless Mouse",
+  "price": 25.50
+}'
 ```
 
-The response looks the same, but now it's a **DTO**, not an Entity!
+*Explanation of the curl command:*
+- `-X POST`: We are sending a POST request.
+- `-H "Content-Type: application/json"`: We are telling the server, "Hey, I am sending you JSON data."
+- `-d '{...}'`: This is the actual JSON body.
+
+**Expected Result:**
+```json
+{"id":1,"name":"Wireless Mouse","price":25.5}
+```
+
+---
+
+## 🚨 Common Errors
+| Error | Cause | Fix |
+|---|---|---|
+| `400 Bad Request` | The JSON you sent doesn't match the Java object. | Check your spelling in the JSON. It must exactly match `ProductRequest(String name, Double price)`. |
+| `Missing required request body` | You forgot the `-d` flag in curl, or forgot `-H "Content-Type: application/json"`. | Ensure both flags are present in your curl command. |
 
 ---
 
 ## 🛠️ Exercise
-1. Add a `description` field to the `Product` entity (create a Flyway migration for it).
-2. Do **NOT** add `description` to `ProductResponse`.
-3. Create a product with a description.
-4. Get the product and verify `description` is NOT in the response.
-5. This proves the DTO controls what data is exposed!
+1. Add a `description` field to the `Product` record.
+2. Add a `description` field to the `ProductRequest` record.
+3. Update the `ProductService` to pass the description into the new Product.
+4. Test it by sending a JSON body with a description.
 
 ---
 
 ## 🧠 Quiz
-1. What does DTO stand for?
-2. Give 2 reasons why we shouldn't expose Entities directly.
-3. In the restaurant analogy, what represents the DTO?
+1. What is the difference between `@RequestParam` and `@RequestBody`?
+2. What does the `-H "Content-Type: application/json"` flag do in cURL?
+3. Why do we use a `ProductRequest` DTO instead of just passing the `Product` model directly from the client? *(Hint: Think about the `id` field!)*
 
 ---
 
 ## 🛑 STOP
-Reply with your exercise results and quiz answers before moving to Lesson 6.
+Reply with your exercise code and quiz answers. 
+
+Once you complete this, you have built a fully functional, in-memory REST API! 
+Reply **"Next"** to get **Lessons 6, 7, 8, and 9**, where we will finally connect this to a **Real PostgreSQL Database using Docker**!
