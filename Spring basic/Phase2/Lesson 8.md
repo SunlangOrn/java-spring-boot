@@ -1,258 +1,160 @@
-# 📘 Phase 2, Lesson 8: Global Exception Handling
+# 📘 Phase 2, Lesson 8: Repositories & Saving Real Data
 
-## 📋 Table of Contents
-- [Learning Goals](#-learning-goals)
-- [The Problem](#-the-problem)
-- [The Solution](#-the-solution)
-- [Step-by-Step Build](#-step-by-step-build)
-- [Run and Test](#-run-and-test)
-- [Common Errors](#-common-errors)
-- [Exercise](#-exercise)
-- [Quiz](#-quiz)
+## 🎯 Learning Goal
+- ✅ Understand what a Spring Data JPA Repository is.
+- ✅ Replace the in-memory `ArrayList` with real database operations.
+- ✅ Learn the magic of `save()`, `findAll()`, and `findById()`.
 
 ---
 
-## 🎯 Learning Goals
-- ✅ Create a custom exception for "not found" scenarios
-- ✅ Build a Global Exception Handler using `@RestControllerAdvice`
-- ✅ Return clean, professional JSON error responses
-- ✅ Handle validation errors with proper field-level messages
+## 💡 The Concept: The Repository
+In Lesson 4, we used an `ArrayList` to store products. When the app restarted, the data vanished. 
 
----
-
-## 🚨 The Problem
-
-### Problem 1: Ugly 404 Errors
-Right now, if a product isn't found, your service returns `null`, and the client gets an empty response or a crash.
-
-### Problem 2: Ugly Validation Errors
-When `@Valid` fails, Spring returns a massive, ugly JSON with stack traces. Clients can't read it.
-
-### What We Want Instead
-A clean, professional error response:
-```json
-{
-  "timestamp": "2026-09-08T12:00:00",
-  "status": 404,
-  "error": "Not Found",
-  "message": "Product not found with id: 999"
-}
-```
-
----
-
-## 💡 The Solution
-
-We use **`@RestControllerAdvice`**. Think of it as a **safety net** that catches all exceptions from all controllers and converts them into clean JSON responses.
-
-```text
-Controller throws exception
-        ↓
-@RestControllerAdvice catches it
-        ↓
-Converts to clean JSON
-        ↓
-Sends to client
-```
+A **Repository** is a Spring interface that talks directly to the database. The magic of Spring Data JPA is that **you don't write any SQL**. You just create an interface that extends `JpaRepository`, and Spring writes the SQL for you automatically at runtime!
 
 ---
 
 ## 🛠️ Step-by-Step Build
 
-### Step 1: Create a Custom Exception
-```java
-// src/main/java/com/example/product/exception/ProductNotFoundException.java
-package com.example.product.exception;
+### Step 1: Create the Repository
+Create a new package called `repository`. Inside, create `ProductRepository.java`:
 
-// Extends RuntimeException so we don't need to declare it with "throws"
-public class ProductNotFoundException extends RuntimeException {
+```java
+// src/main/java/com/example/demo/repository/ProductRepository.java
+package com.example.demo.repository;
+
+import com.example.demo.entity.Product;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository // Optional, but good practice to mark it as a Spring Bean
+public interface ProductRepository extends JpaRepository<Product, Long> {
+    // <Product, Long> means: 
+    // 1. We are managing the 'Product' entity.
+    // 2. The Primary Key (ID) of this entity is a 'Long'.
     
-    public ProductNotFoundException(Long id) {
-        super("Product not found with id: " + id);
-        // super() passes the message to the parent RuntimeException class
-    }
+    // Spring automatically provides these methods for free:
+    // - save(Product)
+    // - findAll()
+    // - findById(Long)
+    // - deleteById(Long)
+    // - count()
 }
 ```
 
-**Why create a custom exception?**
-- `RuntimeException` is too generic. You don't know what went wrong.
-- `ProductNotFoundException` tells you exactly what happened.
-- You can handle it differently from other errors (404 vs 500).
+### Step 2: Update the Service to use the Repository
+Now, let's replace the `ArrayList` in `ProductService` with our new `ProductRepository`.
 
-### Step 2: Throw It in the Service
 ```java
-// In ProductService.java
-public ProductResponse getProductById(Long id) {
-    Product product = productRepository.findById(id)
-            .orElseThrow(() -> new ProductNotFoundException(id));
-            // ↑ If not found, throw the custom exception
-    return productMapper.toResponse(product);
-}
-```
+// src/main/java/com/example/demo/service/ProductService.java
+package com.example.demo.service;
 
-**How `orElseThrow` works:**
-- `findById(id)` returns an `Optional<Product>`
-- If the product exists → returns it
-- If the product doesn't exist → runs the lambda `() -> new ProductNotFoundException(id)`
+import com.example.demo.dto.ProductRequest;
+import com.example.demo.entity.Product;
+import com.example.demo.repository.ProductRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-### Step 3: Create the Global Exception Handler
-```java
-// src/main/java/com/example/product/exception/GlobalExceptionHandler.java
-package com.example.product.exception;
+import java.util.List;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
+@Service
+@RequiredArgsConstructor // Lombok generates the constructor for us!
+public class ProductService {
 
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
+    private final ProductRepository productRepository; // Inject the repository
 
-@RestControllerAdvice  // "Catch exceptions from ALL controllers"
-public class GlobalExceptionHandler {
-
-    // ─── Handler 1: Product Not Found → 404 ───
-    @ExceptionHandler(ProductNotFoundException.class)
-    public ResponseEntity<Map<String, Object>> handleNotFound(ProductNotFoundException ex) {
-        
-        Map<String, Object> body = new HashMap<>();
-        body.put("timestamp", LocalDateTime.now());
-        body.put("status", HttpStatus.NOT_FOUND.value());    // 404
-        body.put("error", "Not Found");
-        body.put("message", ex.getMessage());                // "Product not found with id: 999"
-        
-        return new ResponseEntity<>(body, HttpStatus.NOT_FOUND);
+    // READ: Get all products from the database
+    @Transactional(readOnly = true)
+    public List<Product> getAllProducts() {
+        return productRepository.findAll();
     }
 
-    // ─── Handler 2: Validation Errors → 400 ───
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
-        
-        Map<String, Object> body = new HashMap<>();
-        body.put("timestamp", LocalDateTime.now());
-        body.put("status", HttpStatus.BAD_REQUEST.value());  // 400
-        body.put("error", "Validation Failed");
-        
-        // Collect all field-level errors
-        Map<String, String> fieldErrors = new HashMap<>();
-        ex.getBindingResult().getFieldErrors().forEach(error -> {
-            fieldErrors.put(error.getField(), error.getDefaultMessage());
-            // Example: "name" → "Product name is required"
-        });
-        body.put("errors", fieldErrors);
-        
-        return new ResponseEntity<>(body, HttpStatus.BAD_REQUEST);
+    // READ: Get one product by ID
+    @Transactional(readOnly = true)
+    public Product getProductById(Long id) {
+        // orElseThrow is a modern Java way to handle "not found"
+        return productRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Product not found with id: " + id));
     }
 
-    // ─── Handler 3: Everything Else → 500 ───
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex) {
+    // CREATE: Save a new product to the database
+    @Transactional
+    public Product addProduct(ProductRequest request) {
+        // 1. Map the Request DTO to the Entity
+        Product newProduct = Product.builder()
+                .name(request.name())
+                .price(request.price())
+                .description(request.description()) // From Lesson 7 exercise
+                .build();
         
-        Map<String, Object> body = new HashMap<>();
-        body.put("timestamp", LocalDateTime.now());
-        body.put("status", HttpStatus.INTERNAL_SERVER_ERROR.value()); // 500
-        body.put("error", "Internal Server Error");
-        body.put("message", "An unexpected error occurred");
-        
-        return new ResponseEntity<>(body, HttpStatus.INTERNAL_SERVER_ERROR);
+        // 2. Save to database. Hibernate will automatically generate the ID!
+        return productRepository.save(newProduct);
     }
 }
 ```
 
-**Line-by-line explanation:**
+**Line-by-line:**
+- `@RequiredArgsConstructor`: Because `productRepository` is `final`, Lombok creates the constructor `public ProductService(ProductRepository productRepository)` for us. Clean!
+- `@Transactional`: Tells Spring to wrap this method in a database transaction. If anything fails, it rolls back. `readOnly = true` is an optimization for methods that only read data.
+- `productRepository.save()`: If the `id` is null, it runs an `INSERT`. If the `id` exists, it runs an `UPDATE`.
 
-1. `@RestControllerAdvice` = "This class handles exceptions for ALL controllers in the app"
-2. `@ExceptionHandler(ProductNotFoundException.class)` = "When this specific exception is thrown, run this method"
-3. `Map<String, Object> body` = We build the JSON response manually using a Map
-4. `ex.getMessage()` = Gets the message we passed in the exception constructor
-5. `ex.getBindingResult().getFieldErrors()` = Gets all validation errors from `@Valid`
-6. `error.getField()` = The field name (e.g., "name", "price")
-7. `error.getDefaultMessage()` = The message from the annotation (e.g., "Product name is required")
+### Step 3: Update the Controller (Minor Fix)
+Our Controller from Lesson 5 is already perfect! It takes the `ProductRequest`, passes it to the Service, and returns the `Product`. Because we changed the Service to return a real `Product` entity, the Controller will automatically convert it to JSON.
+
+*(Note: In Lesson 10, we will learn why returning the Entity directly is bad, and we will introduce Response DTOs and MapStruct. For now, this is fine to see the database working!)*
 
 ---
 
 ## 🚀 Run and Test
 
-### Test 1: Product Not Found (404)
-```bash
-curl http://localhost:8080/api/products/999
-```
-**Expected:**
-```json
-{
-  "timestamp": "2026-09-08T12:00:00",
-  "status": 404,
-  "error": "Not Found",
-  "message": "Product not found with id: 999"
-}
-```
+Restart your app. Watch the console for SQL logs!
 
-### Test 2: Validation Error (400)
+**Test 1: Add a product**
 ```bash
-curl -X POST http://localhost:8080/api/products \
+curl -X POST http://localhost:8081/api/products \
 -H "Content-Type: application/json" \
--d '{"name": "", "price": -50, "stock": -10}'
+-d '{
+  "name": "Mechanical Keyboard",
+  "price": 150.00,
+  "description": "RGB backlit"
+}'
 ```
-**Expected:**
-```json
-{
-  "timestamp": "2026-09-08T12:00:00",
-  "status": 400,
-  "error": "Validation Failed",
-  "errors": {
-    "name": "Product name is required",
-    "price": "Price must be greater than zero",
-    "stock": "Stock cannot be negative"
-  }
-}
-```
+*Expected:* Returns the saved product, including the newly generated `id`, `createdAt`, and `updatedAt`.
 
-### Test 3: Valid Request (201)
+**Test 2: Get all products**
 ```bash
-curl -X POST http://localhost:8080/api/products \
--H "Content-Type: application/json" \
--d '{"name": "Keyboard", "price": 79.99, "stock": 25}'
+curl http://localhost:8081/api/products
 ```
-**Expected:** `201 Created` with product JSON.
+*Expected:* A JSON array containing your product.
+
+**Test 3: Restart the app and Test 2 again**
+The data is **still there**! It is safely stored in PostgreSQL.
 
 ---
 
 ## 🚨 Common Errors
-
 | Error | Cause | Fix |
 |---|---|---|
-| Exception returns 500 instead of 404 | Handler not found by Spring | Ensure `GlobalExceptionHandler` is in a scanned package |
-| Validation still shows ugly errors | Missing `MethodArgumentNotValidException` handler | Add Handler 2 from above |
-| `@RestControllerAdvice` vs `@ControllerAdvice` | Confusion | Use `@RestControllerAdvice` for REST APIs (it includes `@ResponseBody`) |
+| `Product not found with id: X` | You requested an ID that doesn't exist. | This is expected behavior from our `orElseThrow` logic. |
+| `could not prepare statement` | Column name mismatch between Entity and DB. | Check `@Column` names and ensure `ddl-auto: update` ran. |
 
 ---
 
 ## 🛠️ Exercise
-1. Create a new custom exception: `DuplicateProductException` with message "Product with this name already exists".
-2. In the service `createProduct` method, check if a product with the same name already exists (add a `findByName` method to the repository).
-3. If it exists, throw `DuplicateProductException`.
-4. Add a handler in `GlobalExceptionHandler` that returns `409 Conflict` for this exception.
-5. Test by creating two products with the same name.
+1. Add a `deleteProduct(Long id)` method to `ProductService` that calls `productRepository.deleteById(id)`.
+2. Add a `@DeleteMapping("/{id}")` to `ProductController` that calls this new service method.
+3. Test it with `curl -X DELETE http://localhost:8081/api/products/1`
+4. Verify the product is gone by calling GET all.
 
 ---
 
 ## 🧠 Quiz
-1. What does `@RestControllerAdvice` do?
-2. Why is it better to throw `ProductNotFoundException` instead of a generic `RuntimeException`?
-3. What HTTP status code should you return for validation errors?
+1. Why do we extend `JpaRepository<Product, Long>`? What do those two types mean?
+2. What is the difference between `@Transactional` and `@Transactional(readOnly = true)`?
+3. How does `productRepository.save()` know whether to `INSERT` or `UPDATE`?
 
 ---
 
-## 🎉 Phase 2 Progress
-You now have a production-ready Spring Boot API with:
-- ✅ PostgreSQL database
-- ✅ Flyway migrations
-- ✅ JPA entities
-- ✅ DTOs with MapStruct
-- ✅ Bean Validation
-- ✅ Global Exception Handling
-
 ## 🛑 STOP
-Reply with your exercise code and quiz answers. Next, we will complete the CRUD with **Transactions, Update, Delete, Pagination**, and **Testing**!
+Reply with your exercise confirmation and quiz answers before moving to Lesson 9.

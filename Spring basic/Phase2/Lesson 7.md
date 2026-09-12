@@ -1,161 +1,171 @@
-# 📘 Phase 2, Lesson 7: Bean Validation (The Bouncer)
+# 📘 Phase 2, Lesson 7: JPA Entities & The `BaseEntity` Pattern
 
-## 📋 Table of Contents
-- [Learning Goals](#-learning-goals)
-- [The Problem](#-the-problem)
-- [The Bouncer Analogy](#-the-bouncer-analogy)
-- [Step-by-Step Build](#-step-by-step-build)
-- [Run and Test](#-run-and-test)
-- [Common Errors](#-common-errors)
-- [Exercise](#-exercise)
-- [Quiz](#-quiz)
+## 🎯 Learning Goal
+- ✅ Connect Spring Boot to the PostgreSQL database.
+- ✅ Learn the Enterprise `BaseEntity` pattern to avoid repeating code.
+- ✅ Create your first JPA `@Entity`.
 
 ---
 
-## 🎯 Learning Goals
-- ✅ Understand why we must validate incoming data
-- ✅ Learn the difference between `@NotNull`, `@NotEmpty`, and `@NotBlank`
-- ✅ Add validation rules to a DTO
-- ✅ Trigger validation in the Controller using `@Valid`
+## 💡 The Concept: JPA and Entities
+**JPA (Java Persistence API)** is the bridge between your Java code and the SQL database. 
+An **Entity** is a Java class that represents a table in the database. Every row in the table is an object of this class.
 
----
-
-## 🚨 The Problem
-
-Right now, your API accepts **anything**:
-```json
-{"name": "", "price": -50, "stock": -10}
-```
-This saves a product with no name, negative price, and negative stock to your database!
-
----
-
-## 🛡️ The Bouncer Analogy
-
-Your app is a **VIP Nightclub**:
-- **Database** = VIP lounge
-- **Service** = Bartender
-- **Controller** = Entrance door
-- **Bean Validation** = **The Bouncer**
-
-The Bouncer checks IDs at the door. If you don't meet the rules, you **never** get inside.
+In professional apps, *every* table needs an `id`, `createdAt`, and `updatedAt`. Instead of typing these 3 fields into every single Entity, we create a **`BaseEntity`** and let other classes inherit from it.
 
 ---
 
 ## 🛠️ Step-by-Step Build
 
-### Step 1: Ensure Dependency Exists
+### Step 1: Add Dependencies
+Ensure these are in your `pom.xml` (Spring Initializr usually adds them if you selected "Spring Data JPA" and "PostgreSQL Driver"):
 ```xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-validation</artifactId>
+    <artifactId>spring-boot-starter-data-jpa</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.postgresql</groupId>
+    <artifactId>postgresql</artifactId>
+    <scope>runtime</scope>
 </dependency>
 ```
 
-### Step 2: Add Rules to the Request DTO
-```java
-// src/main/java/com/example/product/dto/request/ProductCreateRequest.java
-package com.example.product.dto.request;
+### Step 2: Configure `application.yml`
+Update your `src/main/resources/application.yml` to tell Spring how to connect to Docker:
 
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
-import jakarta.validation.constraints.PositiveOrZero;
-import jakarta.validation.constraints.Size;
+```yaml
+server:
+  port: 8081
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/product_db
+    username: admin
+    password: admin123
+  jpa:
+    hibernate:
+      ddl-auto: update # WARNING: Only for learning! We will fix this in Lesson 9.
+    show-sql: true     # Prints the SQL queries to the console (great for learning)
+    properties:
+      hibernate:
+        format_sql: true # Makes the printed SQL easy to read
+
+app:
+  welcome-message: "Hello from the configuration file!"
+  version: "1.0.0"
+```
+
+### Step 3: Enable JPA Auditing
+Open `DemoApplication.java` and add `@EnableJpaAuditing`. This tells Spring to automatically fill in dates for us.
+
+```java
+package com.example.demo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
+
+@SpringBootApplication
+@EnableJpaAuditing // <-- ADD THIS LINE
+public class DemoApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(DemoApplication.class, args);
+    }
+}
+```
+
+### Step 4: Create the `BaseEntity`
+Create a new package called `entity.base`. Inside, create `BaseEntity.java`:
+
+```java
+// src/main/java/com/example/demo/entity/base/BaseEntity.java
+package com.example.demo.entity.base;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+import java.time.LocalDateTime;
+
+@Getter // We only need getters. IDs and Dates should never be changed manually!
+@MappedSuperclass // Tells JPA: "Copy my fields to any class that extends me"
+@EntityListeners(AuditingEntityListener.class) // Turns on the auto-date magic
+public abstract class BaseEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @CreatedDate
+    @Column(updatable = false) // Cannot be changed after creation
+    private LocalDateTime createdAt;
+
+    @LastModifiedDate
+    private LocalDateTime updatedAt;
+}
+```
+
+### Step 5: Update the `Product` Model to be an Entity
+Delete the old `Product.java` record in the `model` package. 
+Create a new package called `entity`. Inside, create `Product.java`:
+
+```java
+// src/main/java/com/example/demo/entity/Product.java
+package com.example.demo.entity;
+
+import com.example.demo.entity.base.BaseEntity;
+import jakarta.persistence.*;
 import lombok.*;
 
-@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
-public class ProductCreateRequest {
+@Entity // Tells JPA: "This class is a database table"
+@Table(name = "products") // Explicitly names the table
+@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+public class Product extends BaseEntity { // <-- INHERITS id, createdAt, updatedAt!
 
-    @NotBlank(message = "Product name is required")
-    @Size(min = 3, max = 100, message = "Name must be 3-100 characters")
+    @Column(nullable = false)
     private String name;
 
-    @NotNull(message = "Price is required")
-    @Positive(message = "Price must be greater than zero")
+    @Column(nullable = false)
     private Double price;
-
-    @NotNull(message = "Stock is required")
-    @PositiveOrZero(message = "Stock cannot be negative")
-    private Integer stock;
+    
+    private String description;
 }
 ```
-
-### 🧠 The 3 String Validators (Very Important!)
-
-| Annotation | `null` | `""` | `"   "` | `"abc"` |
-|---|---|---|---|---|
-| `@NotNull` | ❌ | ✅ | ✅ | ✅ |
-| `@NotEmpty` | ❌ | ❌ | ✅ | ✅ |
-| `@NotBlank` | ❌ | ❌ | ❌ | ✅ |
-
-**Always use `@NotBlank` for text fields like names and emails!**
-
-### Step 3: Trigger the Bouncer with `@Valid`
-```java
-// In ProductController.java
-import jakarta.validation.Valid;
-
-@PostMapping
-public ResponseEntity<ProductResponse> createProduct(
-        @Valid @RequestBody ProductCreateRequest request) {  // ← @Valid here!
-    return ResponseEntity.status(HttpStatus.CREATED)
-            .body(productService.createProduct(request));
-}
-```
-
-**How it works:**
-1. Client sends JSON
-2. Spring converts JSON → `ProductCreateRequest`
-3. `@Valid` triggers the Bouncer
-4. **If valid:** Method runs normally
-5. **If invalid:** Method **never runs**. Spring returns `400 Bad Request` immediately.
 
 ---
 
 ## 🚀 Run and Test
-
-**Test 1: Bad data**
-```bash
-curl -X POST http://localhost:8080/api/products \
--H "Content-Type: application/json" \
--d '{"name": "", "price": -50, "stock": -10}'
-```
-Expected: `400 Bad Request` (the Bouncer blocked it!)
-
-**Test 2: Good data**
-```bash
-curl -X POST http://localhost:8080/api/products \
--H "Content-Type: application/json" \
--d '{"name": "Keyboard", "price": 79.99, "stock": 25}'
-```
-Expected: `201 Created`
+1. Make sure Docker is running (`docker-compose up -d`).
+2. Run your Spring Boot application.
+3. Look at the console. You will see Hibernate automatically generate and run a `CREATE TABLE products` SQL statement!
+4. Go to **pgAdmin** (http://localhost:5050), refresh, and look inside `product_db` -> Schemas -> public -> Tables. You will see the `products` table with `id`, `created_at`, `updated_at`, `name`, `price`, and `description` columns!
 
 ---
 
 ## 🚨 Common Errors
-
 | Error | Cause | Fix |
 |---|---|---|
-| Validation not working | Missing `@Valid` in controller | Add `@Valid` before `@RequestBody` |
-| Wrong import | Using `javax.validation` | Use `jakarta.validation` (Spring Boot 3+) |
-| `@NotBlank` allows spaces | Using `@NotNull` instead | Use `@NotBlank` for strings |
+| `Connection refused` | Docker database isn't running. | Run `docker-compose up -d`. |
+| `createdAt` is null in DB | Forgot `@EnableJpaAuditing`. | Add it to `DemoApplication.java`. |
+| `Cannot resolve symbol 'Entity'` | Missing JPA dependency or wrong import. | Ensure you import `jakarta.persistence.Entity`, NOT `javax`. |
 
 ---
 
 ## 🛠️ Exercise
-1. Add a `description` field to `ProductCreateRequest`. It's optional (can be null), but if provided, max 500 characters.
-2. Add a `sku` field (e.g., "ABC-1234"). It must be exactly 8 characters.
-3. Test with invalid data to verify the Bouncer blocks it.
+1. Add a new field `private Integer stock;` to the `Product` entity.
+2. Restart the app.
+3. Check pgAdmin to verify the `stock` column was automatically added to the table.
 
 ---
 
 ## 🧠 Quiz
-1. What is the exact difference between `@NotNull`, `@NotEmpty`, and `@NotBlank`?
-2. If `@Valid` fails, does the code inside the controller method still execute?
-3. What annotation triggers validation in the controller?
+1. What does `@MappedSuperclass` do? Does it create a table in the database?
+2. Why do we use `@Getter` but not `@Setter` on the `BaseEntity` class?
+3. What does `ddl-auto: update` do, and why is it dangerous for real production apps?
 
 ---
 
 ## 🛑 STOP
-Reply with your exercise code and quiz answers before moving to Lesson 8.
+Reply with your exercise confirmation and quiz answers before moving to Lesson 8.
