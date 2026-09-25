@@ -1,25 +1,15 @@
 # 📘 Phase 5, Lesson 4: Refresh Tokens & Stateless Logout
 
-## 📋 Table of Contents
-- [Learning Goals](#-learning-goals)
-- [The Concept: Access vs. Refresh Tokens](#-the-concept-access-vs-refresh-tokens)
-- [Step 1: Update JwtService for Refresh Tokens](#-step-1-update-jwtservice-for-refresh-tokens)
-- [Step 2: Build the Refresh Endpoint](#-step-2-build-the-refresh-endpoint)
-- [The Concept: Stateless Logout](#-the-concept-stateless-logout)
-- [Run and Test](#-run-and-test)
-- [Exercise](#-exercise)
-- [Quiz](#-quiz)
-
 ---
 
-## 🎯 Learning Goals
+## 🎯 Goal
 - ✅ Understand the difference between Access Tokens and Refresh Tokens.
 - ✅ Implement a `/refresh` endpoint to get new access tokens without logging in again.
 - ✅ Understand how "Logout" works in a stateless JWT architecture.
 
 ---
 
-## 🎟️ The Concept: Access vs. Refresh Tokens
+## 🧠 The Big Picture
 
 Imagine your Access Token is a **hotel room key card**, and the Refresh Token is your **ID Card at the front desk**.
 
@@ -31,27 +21,20 @@ If a hacker steals your Access Token, they only have 15 minutes to do damage. Bu
 
 ---
 
-## 🛠️ Step-by-Step Build
+## 🛠️ Step 1: Update JwtService for Refresh Tokens
 
-### Step 1: Update JwtService for Refresh Tokens
+### What we're doing:
+Add a method to generate a long-lived refresh token.
 
-Update `application.yml` to add a longer expiration for refresh tokens:
-```yaml
-app:
-  jwt:
-    secret: ${JWT_SECRET:mySuperSecretKeyForDevelopmentOnlyChangeInProduction123!}
-    expiration: 900000          # 15 minutes (15 * 60 * 1000)
-    refresh-expiration: 604800000 # 7 days (7 * 24 * 60 * 60 * 1000)
-```
+### The Code:
+**Update:** `src/main/java/com/example/demo/security/JwtService.java`
 
-Update `JwtService.java` to generate refresh tokens:
 ```java
-// src/main/java/com/example/product/security/JwtService.java
-// ... add to existing class ...
-
+// Add this field:
 @Value("${app.jwt.refresh-expiration}")
 private long refreshExpiration;
 
+// Add this method:
 public String generateRefreshToken(UserDetails userDetails) {
     return Jwts.builder()
             .subject(userDetails.getUsername())
@@ -62,42 +45,43 @@ public String generateRefreshToken(UserDetails userDetails) {
 }
 ```
 
-### Step 2: Build the Refresh Endpoint
+---
 
-Update `AuthResponse` to include the refresh token:
+## 🛠️ Step 2: Update Login to Return Both Tokens
+
+### What we're doing:
+When the user logs in, give them both the short-lived Access Token and the long-lived Refresh Token.
+
+### The Code:
+**Update:** `src/main/java/com/example/demo/dto/response/AuthResponse.java`
 ```java
-// Add to AuthResponse.java
+// Add this field:
 private String refreshToken;
 ```
 
-Update `AuthService.login()` to return both:
+**Update:** `src/main/java/com/example/demo/service/AuthService.java` (inside the `login` method)
 ```java
-// In AuthService.login()
 String jwtToken = jwtService.generateToken(user);
 String refreshToken = jwtService.generateRefreshToken(user); // ← NEW
 
 return AuthResponse.builder()
         .accessToken(jwtToken)
         .refreshToken(refreshToken) // ← NEW
-        .username(user.getUsername())
+        // ... other fields ...
         .build();
 ```
 
-Create the Refresh Endpoint in `AuthController`:
-```java
-// src/main/java/com/example/product/controller/AuthController.java
-// ... add to existing class ...
+---
 
-@PostMapping("/refresh")
-public ResponseEntity<AuthResponse> refreshToken(@RequestParam String refreshToken) {
-    AuthResponse response = authService.refreshToken(refreshToken);
-    return ResponseEntity.ok(response);
-}
-```
+## 🛠️ Step 3: Build the Refresh Endpoint
 
-Add the logic in `AuthService`:
+### What we're doing:
+Create an endpoint that accepts a valid Refresh Token and returns a brand new Access Token.
+
+### The Code:
+
+**Update:** `src/main/java/com/example/demo/service/AuthService.java`
 ```java
-// In AuthService.java
 public AuthResponse refreshToken(String refreshToken) {
     // 1. Extract username from the refresh token
     String username = jwtService.extractUsername(refreshToken);
@@ -112,12 +96,22 @@ public AuthResponse refreshToken(String refreshToken) {
         
         return AuthResponse.builder()
                 .accessToken(newAccessToken)
-                .refreshToken(refreshToken) // Return the same refresh token (or rotate it)
+                .refreshToken(refreshToken) // Return the same refresh token
                 .username(username)
                 .build();
     }
     
     throw new RuntimeException("Invalid or expired refresh token");
+}
+```
+
+**Update:** `src/main/java/com/example/demo/controller/AuthController.java`
+```java
+@PostMapping("/refresh")
+public ResponseEntity<HttpBodyResponse<AuthResponse>> refreshToken(
+        @RequestParam String refreshToken) {
+    AuthResponse response = authService.refreshToken(refreshToken);
+    return responseSucceed(response);
 }
 ```
 
@@ -130,44 +124,40 @@ public AuthResponse refreshToken(String refreshToken) {
 **The Solutions:**
 1. **Short-lived Access Tokens**: Make the access token expire in 15 minutes. When the user logs out, the hacker's token becomes useless in 15 minutes. (This is what we are doing).
 2. **Token Blacklist (Redis)**: When a user logs out, add their token to a Redis blacklist. The `JwtAuthenticationFilter` checks Redis before accepting the token. (We will cover this in Phase 11).
-3. **Refresh Token Revocation**: Store refresh tokens in the database. When the user logs out, delete the refresh token from the DB.
 
-For now, **Client-Side Logout** is sufficient for our learning phase. The client simply deletes the `accessToken` and `refreshToken` from memory/local storage.
+For now, **Client-Side Logout** is sufficient. The client simply deletes the `accessToken` and `refreshToken` from memory/local storage.
 
 ---
 
-## 🚀 Run and Test
+## 🧪 Run & Test
 
+### Test 1: Login and get both tokens
 ```bash
-./mvnw spring-boot:run
-```
-
-**Test 1: Login and get both tokens**
-```bash
-curl -X POST http://localhost:8080/api/auth/login \
+curl -X POST http://localhost:8081/api/auth/login \
 -H "Content-Type: application/json" \
 -d '{"username": "john_doe", "password": "securePassword123"}'
 ```
-*Expected:* JSON with `accessToken` and `refreshToken`.
+**Expected:** JSON with `accessToken` and `refreshToken`.
 
-**Test 2: Wait 15 minutes (or change expiration to 10 seconds for testing)**
-Try using the `accessToken`. It will fail (403 Forbidden) because it expired.
-
-**Test 3: Use the Refresh Token to get a new Access Token**
+### Test 2: Use the Refresh Token to get a new Access Token
 ```bash
-curl -X POST "http://localhost:8080/api/auth/refresh?refreshToken=<PASTE_REFRESH_TOKEN_HERE>"
+curl -X POST "http://localhost:8081/api/auth/refresh?refreshToken=<PASTE_REFRESH_TOKEN_HERE>"
 ```
-*Expected:* A new JSON with a brand new `accessToken`!
+**Expected:** A new JSON with a brand new `accessToken`!
 
 ---
 
-## 🚨 Common Errors
-1. **`JWT expired` on refresh**: Your refresh token expired. Ensure `app.jwt.refresh-expiration` is set to a future date.
-2. **`400 Bad Request` on `/refresh`**: You forgot to pass the `refreshToken` as a query parameter or request body.
+## ⚠️ Common Mistakes
+
+| Mistake | Why It Happens | How to Fix |
+|---------|---------------|------------|
+| `JWT expired` on refresh | Your refresh token expired. | Ensure `app.jwt.refresh-expiration` is set to a future date (e.g., 7 days). |
+| `400 Bad Request` on `/refresh` | You forgot to pass the `refreshToken` as a query parameter. | Ensure the URL looks like `/api/auth/refresh?refreshToken=eyJ...` |
 
 ---
 
-## 🛠️ Exercise
+## ✏️ Exercise
+
 1. Implement a "Logout" endpoint: `POST /api/auth/logout`.
 2. Since we are stateless, the endpoint doesn't actually need to do anything on the server side. Just return a `200 OK` with the message "Logged out successfully. Please delete your tokens on the client side."
 3. (Optional) Add a `@PreAuthorize("isAuthenticated()")` to the logout endpoint so only logged-in users can call it.
@@ -175,6 +165,7 @@ curl -X POST "http://localhost:8080/api/auth/refresh?refreshToken=<PASTE_REFRESH
 ---
 
 ## 🧠 Quiz
+
 1. Why do we use a short-lived Access Token and a long-lived Refresh Token?
 2. Why is "Logout" difficult in a stateless JWT architecture?
 3. What is one way to implement a "true" server-side logout with JWTs?
@@ -191,6 +182,6 @@ You have successfully implemented a complete, industry-standard JWT Authenticati
 - ✅ Spring Security knows who the user is without server-side sessions.
 
 ## 🛑 STOP
-Reply with "Phase 5 Complete" and your exercise results. 
+Reply with **"Phase 5 Complete"** and your exercise results. 
 
 Next, we will move to **Phase 6: OAuth2 & Authorization Server**, where we will learn how to let users log in using Google/GitHub, and how to build our own Authorization Server!

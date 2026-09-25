@@ -1,21 +1,8 @@
 # 📘 Phase 5, Lesson 1: Introduction to JWT & Generating Tokens
 
-## 📋 Table of Contents
-- [Learning Goals](#-learning-goals)
-- [The Problem with HTTP Basic Auth](#-the-problem-with-http-basic-auth)
-- [The Solution: The "Festival Wristband" Analogy](#-the-solution-the-festival-wristband-analogy)
-- [What is a JWT? (The Anatomy)](#-what-is-a-jwt-the-anatomy)
-- [Step 1: Add JWT Dependencies](#-step-1-add-jwt-dependencies)
-- [Step 2: Configure the Secret Key](#-step-2-configure-the-secret-key)
-- [Step 3: Create the JwtService](#-step-3-create-the-jwtservice)
-- [Run and Test](#-run-and-test)
-- [Common Errors](#-common-errors)
-- [Exercise](#-exercise)
-- [Quiz](#-quiz)
-
 ---
 
-## 🎯 Learning Goals
+## 🎯 Goal
 - ✅ Understand why we need JWTs instead of sending passwords every time.
 - ✅ Understand the 3 parts of a JWT (Header, Payload, Signature).
 - ✅ Add the JJWT library to the project.
@@ -23,56 +10,43 @@
 
 ---
 
-## 🚨 The Problem with HTTP Basic Auth
+## 🧠 The Big Picture
 
-Right now, when "John" wants to buy a product, his app sends this header:
-`Authorization: Basic am9objpzZWN1cmVQYXNzd29yZDEyMw==` (which is just his username and password encoded in Base64).
+Right now, we are using **HTTP Basic Auth**. Every time the user wants to buy a product, their app sends their username and password in the header. 
 
 **Why is this bad?**
-1. **Inefficient:** The server has to query the database and run BCrypt (which is intentionally slow) on *every single request*.
-2. **Security Risk:** If the connection is intercepted (even briefly), the hacker gets the actual password.
-3. **Stateful:** The server has to keep track of who is logged in (Sessions).
+1. **Inefficient:** The server has to query the database and run BCrypt (which is slow) on *every single request*.
+2. **Security Risk:** If the connection is intercepted, the hacker gets the actual password.
+3. **Stateful:** The server has to keep track of who is logged in.
 
----
-
-## 🎟️ The Solution: The "Festival Wristband" Analogy
-
+### The Solution: The "Festival Wristband" Analogy
 Imagine you go to a 3-day Music Festival.
+- **Day 1 (HTTP Basic Auth):** Every time you buy a drink, you show your Passport (Password). The bartender calls the main office (Database) to verify it. This takes 5 minutes per drink.
+- **Day 2 (JWT):** On Day 1, you show your Passport at the main gate. The guard puts a **glowing, tamper-proof wristband** on your wrist. Now, every time you buy a drink, the bartender just *looks at the wristband*. 
 
-**Day 1 (HTTP Basic Auth):**
-Every time you want to buy a drink, you show your Passport (Password). The bartender has to call the main office (Database) to verify your Passport is real. This takes 5 minutes per drink.
-
-**Day 2 (JWT):**
-On Day 1, you show your Passport at the main gate. The security guard checks it, and puts a **glowing, tamper-proof wristband** on your wrist. 
-Now, every time you buy a drink, the bartender just **looks at the wristband**. 
-- Is it glowing? (Valid signature)
-- Does it say "VIP"? (Payload/Claims)
-- Did it expire? (Expiration date)
-
-The bartender doesn't need to call the main office. The wristband itself is the proof. **This is a JWT.**
+The wristband is the **JWT**. It contains your name, your VIP status, and an expiration time. It is mathematically sealed so no one can forge it.
 
 ---
 
-## 🧬 What is a JWT? (The Anatomy)
+## 📖 Key Words
 
-A JWT is just a long String that looks like this:
-`eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqb2huIiwicm9sZSI6IkFETUlOIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQsW5c`
-
-It is divided into **3 parts**, separated by dots (`.`):
-
-1. **Header (Red):** "What algorithm was used to sign this?" (e.g., HS256)
-2. **Payload (Purple):** The "Data" (e.g., `sub: "john", role: "ADMIN", exp: 1690000000`). This is called **Claims**.
-3. **Signature (Blue):** A mathematical hash of the Header + Payload + a **Secret Key**. If anyone changes the Payload (e.g., changes "USER" to "ADMIN"), the Signature becomes invalid, and the server rejects it.
-
-*Pro Tip: You can decode any JWT at [jwt.io](https://jwt.io) to see its contents!*
+| Word | Simple Meaning |
+|------|---------------|
+| **JWT** | JSON Web Token. A standard format for securely transmitting information between parties as a JSON object. |
+| **Header** | Part 1 of the JWT. Says what algorithm was used to sign it (e.g., HS256). |
+| **Payload** | Part 2 of the JWT. The actual data (e.g., `username: "john"`, `role: "ADMIN"`). These are called **Claims**. |
+| **Signature** | Part 3 of the JWT. A mathematical hash of the Header + Payload + a **Secret Key**. If anyone changes the Payload, the Signature breaks. |
+| **Secret Key** | A long, random string known ONLY to the server. Used to sign and verify the token. |
 
 ---
 
-## 🛠️ Step-by-Step Build
+## 🛠️ Step 1: Add JWT Dependencies
 
-### Step 1: Add JWT Dependencies
+### What we're doing:
+Add the standard Java library for creating and reading JWTs.
 
-We will use the standard `jjwt` library by Jwtoken. Open your `pom.xml`:
+### The Code:
+**Update:** `pom.xml`
 
 ```xml
 <dependencies>
@@ -99,38 +73,52 @@ We will use the standard `jjwt` library by Jwtoken. Open your `pom.xml`:
 </dependencies>
 ```
 
+### 📝 After the Code - What Just Happened?
+- `jjwt-api`: The core interfaces and classes we will use in our code.
+- `jjwt-impl` & `jjwt-jackson`: The actual engine that does the cryptographic work and converts the token to/from JSON. They are `runtime` scope because we don't need them to compile our code, only to run it.
+
 ---
 
-### Step 2: Configure the Secret Key
+## 🛠️ Step 2: Configure the Secret Key
 
-⚠️ **CRITICAL SECURITY RULE:** Never hardcode your JWT Secret Key in Java code! If you push your code to GitHub, hackers will steal your key and forge their own admin tokens.
+### What we're doing:
+Create a secret key that the server will use to sign the tokens.
 
-Add it to `application.yml`:
+### The Code:
+**Update:** `src/main/resources/application.yml`
 
 ```yaml
-# src/main/resources/application.yml
 app:
   jwt:
-    # This must be at least 256 bits (32 characters) for HS256 algorithm.
+    # This must be at least 256 bits (32 characters) for the HS256 algorithm.
     # In production, generate a random 64-character string!
     secret: ${JWT_SECRET:mySuperSecretKeyForDevelopmentOnlyChangeInProduction123!}
-    expiration: 86400000      # 1 day in milliseconds (24 * 60 * 60 * 1000)
+    expiration: 900000          # 15 minutes in milliseconds (15 * 60 * 1000)
     refresh-expiration: 604800000 # 7 days in milliseconds
 ```
 
+### 📝 After the Code - What Just Happened?
+- `secret`: The password used to sign the token. **Never hardcode this in Java!** We use an environment variable `${JWT_SECRET}` with a fallback for local development.
+- `expiration`: How long the "wristband" is valid. 15 minutes is standard for security.
+
+### 💡 Note
+> ⚠️ **CRITICAL SECURITY RULE:** If you push your code to GitHub with a hardcoded secret, hackers will steal it and forge their own admin tokens! Always use environment variables in production.
+
 ---
 
-### Step 3: Create the JwtService
+## 🛠️ Step 3: Create the JwtService
 
-This service will act as the "Festival Security Guard". It knows how to create the wristband (generate token) and how to check if the wristband is fake (validate token).
+### What we're doing:
+Create the "Festival Security Guard" service. It knows how to create the wristband (generate token) and how to check if the wristband is fake (validate token).
+
+### The Code:
+Create file: `src/main/java/com/example/demo/security/JwtService.java`
 
 ```java
-// src/main/java/com/example/product/security/JwtService.java
-package com.example.product.security;
+package com.example.demo.security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -205,99 +193,90 @@ public class JwtService {
     }
 
     private SecretKey getSignInKey() {
-        // The secret key must be encoded in Base64 for HS256
-        // For simplicity in this lesson, we convert the string directly to bytes.
-        // In a real production app, you would use a Base64 encoded byte array.
+        // Convert the string secret to a cryptographic key
         byte[] keyBytes = secretKey.getBytes();
         return Keys.hmacShaKeyFor(keyBytes);
     }
 }
 ```
 
-**Line-by-line breakdown of the magic:**
+### 📝 After the Code - What Just Happened?
 - `Jwts.builder()`: Starts creating the token.
 - `.subject()`: Sets the "sub" claim (the username).
 - `.expiration()`: Sets the exact millisecond the token dies.
-- `.signWith(getSignInKey(), Jwts.SIG.HS256)`: Takes the Header + Payload, and mathematically hashes them using our `secretKey`. This creates the Signature.
+- `.signWith(...)`: Takes the Header + Payload, and mathematically hashes them using our `secretKey`. This creates the Signature.
 - `.compact()`: Squashes it all together into the final `eyJ...` string.
+- `isTokenValid()`: Checks two things: Does the username match our database? And has the token expired?
+
+### 📦 Imports to Remember
+```java
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import javax.crypto.SecretKey;
+```
 
 ---
 
-## 🚀 Run and Test
+## 🧪 Run & Test
 
-Let's write a quick test in our `ProductApplication` to prove we can generate a token and read it.
+Let's write a quick test in our `DemoApplication` to prove we can generate a token and read it.
+
+**Update:** `src/main/java/com/example/demo/DemoApplication.java`
 
 ```java
-// src/main/java/com/example/product/ProductApplication.java
-package com.example.product;
+// Add this CommandLineRunner to DemoApplication.java
+@Bean
+CommandLineRunner testJWT(JwtService jwtService) {
+    return args -> {
+        // 1. Create a fake UserDetails object (pretend this came from the DB)
+        UserDetails fakeUser = org.springframework.security.core.userdetails.User.builder()
+                .username("john_doe")
+                .password("doesntmatter")
+                .roles("USER")
+                .build();
 
-import com.example.product.security.JwtService;
-import org.springframework.boot.CommandLineRunner;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.annotation.Bean;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetails;
+        // 2. Generate the Token
+        String token = jwtService.generateToken(fakeUser);
+        
+        System.out.println("=================================");
+        System.out.println("GENERATED JWT:");
+        System.out.println(token);
+        System.out.println("=================================");
 
-@SpringBootApplication
-public class ProductApplication {
-
-    public static void main(String[] args) {
-        SpringApplication.run(ProductApplication.class, args);
-    }
-
-    @Bean
-    CommandLineRunner testJWT(JwtService jwtService) {
-        return args -> {
-            // 1. Create a fake UserDetails object (pretend this came from the DB)
-            UserDetails fakeUser = User.builder()
-                    .username("john_doe")
-                    .password("doesntmatter")
-                    .roles("USER")
-                    .build();
-
-            // 2. Generate the Token
-            String token = jwtService.generateToken(fakeUser);
-            
-            System.out.println("=================================");
-            System.out.println("GENERATED JWT:");
-            System.out.println(token);
-            System.out.println("=================================");
-
-            // 3. Extract data from the Token
-            String extractedUsername = jwtService.extractUsername(token);
-            System.out.println("Extracted Username: " + extractedUsername);
-            
-            // 4. Check if it's valid
-            boolean isValid = jwtService.isTokenValid(token, fakeUser);
-            System.out.println("Is Token Valid? " + isValid);
-            System.out.println("=================================");
-        };
-    }
+        // 3. Extract data from the Token
+        String extractedUsername = jwtService.extractUsername(token);
+        System.out.println("Extracted Username: " + extractedUsername);
+        
+        // 4. Check if it's valid
+        boolean isValid = jwtService.isTokenValid(token, fakeUser);
+        System.out.println("Is Token Valid? " + isValid);
+        System.out.println("=================================");
+    };
 }
 ```
 
-Run the app:
+### Run the app:
 ```bash
 ./mvnw spring-boot:run
 ```
 
-**Look at the console!** You will see a massive string. 
+Look at the console! You will see a massive string. 
 Copy that entire string, go to **[jwt.io](https://jwt.io)**, and paste it into the "Encoded" box on the left. 
 Watch as it magically decodes the Header, Payload (showing `john_doe`), and the Signature on the right!
 
 ---
 
-## 🚨 Common Errors
+## ⚠️ Common Mistakes
 
-| Error | Cause | Fix |
-|---|---|---|
+| Mistake | Why It Happens | How to Fix |
+|---------|---------------|------------|
 | `The signing key's size is X bits which is smaller than required...` | Your `app.jwt.secret` in `application.yml` is too short. | HS256 requires at least 256 bits (32 characters). Make your secret longer. |
-| `JWT expired at...` | You are trying to validate a token that was generated in the past with a 0ms expiration. | Check your `app.jwt.expiration` in `application.yml`. |
+| `JWT expired at...` | You are trying to validate a token that was generated in the past. | Check your `app.jwt.expiration` in `application.yml`. |
 
 ---
 
-## 🛠️ Exercise
+## ✏️ Exercise
 
 1. In the `CommandLineRunner`, generate a token for a user named `admin_user`.
 2. Add a custom claim to the token: `Map.of("roles", List.of("ROLE_ADMIN"))`. Pass this map as the first argument to `generateToken()`.
@@ -316,11 +295,4 @@ Watch as it magically decodes the Header, Payload (showing `john_doe`), and the 
 
 ## 🛑 STOP
 
-**Do not move forward.** 
-
-Reply with:
-1. Confirmation that you generated the token and successfully decoded it on jwt.io.
-2. Your code for the **Exercise** (generating a token with custom role claims).
-3. Your answers to the 3 quiz questions.
-
-Once you reply, we will move to **Phase 5, Lesson 2: The JWT Authentication Filter**, where we will replace HTTP Basic Auth and make Spring Security accept these tokens!
+Reply with your exercise code and quiz answers before moving to Lesson 2.

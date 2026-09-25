@@ -1,18 +1,8 @@
 # 📘 Phase 5, Lesson 2: The JWT Authentication Filter
 
-## 📋 Table of Contents
-- [Learning Goals](#-learning-goals)
-- [The Concept: The Wristband Scanner](#-the-concept-the-wristband-scanner)
-- [Step 1: Create the JWT Filter](#-step-1-create-the-jwt-filter)
-- [Step 2: Update the SecurityFilterChain](#-step-2-update-the-securityfilterchain)
-- [Run and Test](#-run-and-test)
-- [Common Errors](#-common-errors)
-- [Exercise](#-exercise)
-- [Quiz](#-quiz)
-
 ---
 
-## 🎯 Learning Goals
+## 🎯 Goal
 - ✅ Understand how Spring Security intercepts requests to check for JWTs.
 - ✅ Create a custom `OncePerRequestFilter` to extract and validate tokens.
 - ✅ Set the `SecurityContextHolder` so the rest of the app knows who the user is.
@@ -20,7 +10,7 @@
 
 ---
 
-## 🎟️ The Concept: The Wristband Scanner
+## 🧠 The Big Picture
 
 In Lesson 1, we learned how to **create** the wristband (JWT). Now, we need a scanner at the door of every VIP room (endpoint). 
 
@@ -34,21 +24,34 @@ If everything is correct, the filter creates an **Authentication Object** and ha
 
 ---
 
-## 🛠️ Step-by-Step Build
+## 📖 Key Words
 
-### Step 1: Create the JWT Filter
+| Word | Simple Meaning |
+|------|---------------|
+| **Filter** | A component that intercepts HTTP requests *before* they reach the Controller. |
+| **`OncePerRequestFilter`** | A Spring class that guarantees the filter runs exactly once per HTTP request. |
+| **`SecurityContextHolder`** | A special Spring class that holds the currently logged-in user's details for the duration of the request. |
+| **`Bearer`** | The standard prefix for JWT tokens in the `Authorization` header (e.g., `Bearer eyJhbG...`). |
 
-Create a new package `security` and add this class:
+---
+
+## 🛠️ Step 1: Create the JWT Filter
+
+### What we're doing:
+Create a filter that runs on every request, checks for a JWT, and logs the user in if the token is valid.
+
+### The Code:
+Create file: `src/main/java/com/example/demo/security/JwtAuthenticationFilter.java`
 
 ```java
-// src/main/java/com/example/product/security/JwtAuthenticationFilter.java
-package com.example.product.security;
+package com.example.demo.security;
 
-import com.example.product.service.CustomUserDetailsService;
+import com.example.demo.service.CustomUserDetailsService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -60,15 +63,11 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 @Component
+@RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final CustomUserDetailsService userDetailsService;
-
-    public JwtAuthenticationFilter(JwtService jwtService, CustomUserDetailsService userDetailsService) {
-        this.jwtService = jwtService;
-        this.userDetailsService = userDetailsService;
-    }
 
     @Override
     protected void doFilterInternal(
@@ -89,7 +88,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 3. Extract the token (remove "Bearer " prefix)
+        // 3. Extract the token (remove "Bearer " prefix, which is 7 characters)
         jwt = authHeader.substring(7);
 
         // 4. Extract username from the token
@@ -125,20 +124,32 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 }
 ```
 
-**Line-by-line breakdown:**
-- `OncePerRequestFilter`: Ensures this filter runs exactly once per request.
+### 📝 After the Code - What Just Happened?
 - `authHeader.substring(7)`: The header looks like `Bearer eyJhbG...`. We skip the first 7 characters (`Bearer `) to get just the token.
-- `SecurityContextHolder.getContext().setAuthentication(...)`: This is the magic line. We are telling Spring, "Trust me, this user is who they say they are."
+- `SecurityContextHolder.getContext().setAuthentication(...)`: This is the magic line. We are telling Spring, "Trust me, this user is who they say they are." For the rest of this HTTP request, Spring will treat this user as logged in.
 
-### Step 2: Update the SecurityFilterChain
+### 📦 Imports to Remember
+```java
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.web.filter.OncePerRequestFilter;
+```
 
-Now we must tell Spring Security to use our new filter, and we must **disable HTTP Basic Auth**.
+---
+
+## 🛠️ Step 2: Update the SecurityFilterChain
+
+### What we're doing:
+Tell Spring Security to use our new filter, disable HTTP Basic Auth, and stop creating server-side sessions.
+
+### The Code:
+**Update:** `src/main/java/com/example/demo/config/SecurityConfig.java`
 
 ```java
-// src/main/java/com/example/product/config/SecurityConfig.java
-package com.example.product.config;
+package com.example.demo.config;
 
-import com.example.product.security.JwtAuthenticationFilter;
+import com.example.demo.security.JwtAuthenticationFilter;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -147,31 +158,18 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy; // ← NEW IMPORT
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter; // ← NEW IMPORT
 
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
+@RequiredArgsConstructor
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthFilter;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthFilter) {
-        this.jwtAuthFilter = jwtAuthFilter;
-    }
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
-
-    @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
-        return config.getAuthenticationManager();
-    }
+    // ... keep passwordEncoder and authenticationManager beans ...
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -183,7 +181,8 @@ public class SecurityConfig {
             
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/**").permitAll() // Login/Register are public
-                .requestMatchers("/api/products/**").permitAll() // Keep products public for now to test easily
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/products/**").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/categories/**").permitAll()
                 .anyRequest().authenticated()
             )
             
@@ -197,27 +196,25 @@ public class SecurityConfig {
 }
 ```
 
-**Why `SessionCreationPolicy.STATELESS`?**
-Because JWTs are stateless. The server doesn't need to remember who is logged in in a `HttpSession`. The client sends the token on every request. This makes your API scalable!
+### 📝 After the Code - What Just Happened?
+- `SessionCreationPolicy.STATELESS`: Because JWTs are stateless, the server doesn't need to remember who is logged in in a `HttpSession`. The client sends the token on every request. This makes your API scalable!
+- `.addFilterBefore(...)`: We insert our `JwtAuthenticationFilter` into the security chain right before Spring's default login filter.
+
+### 💡 Note
+> Why `STATELESS`? If we used `IF_REQUIRED` (the default), Spring would create a session and send a `JSESSIONID` cookie. That defeats the whole purpose of using JWTs!
 
 ---
 
-## 🚀 Run and Test
-
-```bash
-./mvnw spring-boot:run
-```
+## 🧪 Run & Test
 
 Since we haven't built the `/login` endpoint yet, we need to generate a token manually to test the filter. 
 
 1. Start the app. The `CommandLineRunner` from Lesson 1 will print a JWT to the console. Copy it!
-2. Test accessing a protected endpoint (let's temporarily change `/api/products/**` to require authentication in `SecurityConfig` to test it properly, or just use a new endpoint).
+2. Let's create a quick "Who Am I?" endpoint to test:
 
-Let's create a quick "Who Am I?" endpoint to test:
-
+**Create:** `src/main/java/com/example/demo/controller/UserController.java`
 ```java
-// src/main/java/com/example/product/controller/UserController.java
-package com.example.product.controller;
+package com.example.demo.controller;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -235,29 +232,33 @@ public class UserController {
 }
 ```
 
-**Test 1: Without Token**
+### Test 1: Without Token
 ```bash
-curl http://localhost:8080/api/users/me
+curl http://localhost:8081/api/users/me
 ```
-*Expected:* `403 Forbidden` (or 401).
+**Expected:** `403 Forbidden` (or 401).
 
-**Test 2: With Token**
+### Test 2: With Token
 ```bash
-curl -H "Authorization: Bearer <PASTE_YOUR_TOKEN_HERE>" http://localhost:8080/api/users/me
+curl -H "Authorization: Bearer <PASTE_YOUR_TOKEN_HERE>" http://localhost:8081/api/users/me
 ```
-*Expected:* `Hello, john_doe! Your roles are: [ROLE_USER]`
+**Expected:** `Hello, john_doe! Your roles are: [ROLE_USER]`
 
 **The filter worked!** Spring Security now knows who you are based purely on the JWT.
 
 ---
 
-## 🚨 Common Errors
-1. **`403 Forbidden` even with a valid token**: Your `JwtAuthenticationFilter` is not being executed. *Fix:* Ensure you added `.addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)` in `SecurityConfig`.
-2. **`Full authentication is required`**: The token was invalid or expired, so the filter didn't set the `SecurityContext`. Check the console for errors from `JwtService`.
+## ⚠️ Common Mistakes
+
+| Mistake | Why It Happens | How to Fix |
+|---------|---------------|------------|
+| `403 Forbidden` even with a valid token | Your `JwtAuthenticationFilter` is not being executed. | Ensure you added `.addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)` in `SecurityConfig`. |
+| `Full authentication is required` | The token was invalid or expired, so the filter didn't set the `SecurityContext`. | Check the console for errors from `JwtService`. |
 
 ---
 
-## 🛠️ Exercise
+## ✏️ Exercise
+
 1. Generate a token for the `admin` user (who has `ROLE_ADMIN`).
 2. Call the `/api/users/me` endpoint with the admin's token.
 3. Verify that the response includes `ROLE_ADMIN` in the authorities list.
@@ -265,6 +266,7 @@ curl -H "Authorization: Bearer <PASTE_YOUR_TOKEN_HERE>" http://localhost:8080/ap
 ---
 
 ## 🧠 Quiz
+
 1. Why do we set `SessionCreationPolicy.STATELESS`?
 2. What does `authHeader.substring(7)` do?
 3. Why do we add our filter *before* `UsernamePasswordAuthenticationFilter`?
