@@ -1,214 +1,264 @@
-# 📘 Phase 3, Lesson 3: Dynamic Queries with Specifications
-
-## 📋 Table of Contents
-- [Learning Goals](#-learning-goals)
-- [The Problem: The "Method Explosion"](#-the-problem-the-method-explosion)
-- [The Solution: JPA Specifications](#-the-solution-jpa-specifications)
-- [Step-by-Step Build](#-step-by-step-build)
-- [Run and Test](#-run-and-test)
-- [Exercise](#-exercise)
-- [Quiz](#-quiz)
+# 📘 Phase 3, Lesson 3: Pagination with Relationships
 
 ---
 
-## 🎯 Learning Goals
-- ✅ Understand why writing custom query methods for every filter is a bad idea.
-- ✅ Learn how to use JPA `Specification` to build dynamic queries.
-- ✅ Create a flexible product search endpoint.
+## 🎯 Goal
+Add pagination and sorting to the Product API so it works efficiently even with thousands of products, and correctly loads category data for each page.
 
 ---
 
-## 🚨 The Problem: The "Method Explosion"
+## 🧠 The Big Picture
 
-Imagine your client wants to search for products. They might want to filter by:
-- Name
-- Category
-- Min Price
-- Max Price
+Imagine a library with 1,000,000 books. If someone asks "Show me all books," you don't carry 1,000,000 books to the front desk. You say "Here are the first 20. Want the next page?"
 
-If you use Spring Data JPA method names, you end up writing this:
-```java
-List<Product> findByName(String name);
-List<Product> findByCategoryId(Long categoryId);
-List<Product> findByPriceBetween(Double min, Double max);
-List<Product> findByNameAndCategoryId(String name, Long categoryId);
-List<Product> findByNameAndPriceBetween(String name, Double min, Double max);
-// ... 20 more methods!
-```
-This is unmaintainable. What if they add a "Brand" filter next month? You have to rewrite everything.
+That's **pagination**. We return data in small chunks (pages) instead of all at once.
+
+**Sorting** means the client can choose the order: "Show me products sorted by price, cheapest first."
 
 ---
 
-## 💡 The Solution: JPA Specifications
+## 📖 Key Words
 
-Specifications allow you to build queries **dynamically** at runtime, piece by piece, like building with Lego blocks. 
-
-If the user provides a `name`, we add the `name` block. If they provide `minPrice`, we add the `minPrice` block. If they provide nothing, we return everything.
+| Word | Simple Meaning |
+|------|---------------|
+| **Page** | A small chunk of data (e.g., 10 items) |
+| **Pageable** | A Spring object that holds page number, page size, and sort order |
+| **`Page<T>`** | A Spring object that holds the data PLUS metadata (total pages, total items) |
+| **Offset** | How many items to skip (Page 2 with size 10 = skip 10 items) |
 
 ---
 
-## 🛠️ Step-by-Step Build
+## 🛠️ Step 1: Create the Paging Wrapper
 
-### Step 1: Update the Repository
-To use Specifications, your repository must extend `JpaSpecificationExecutor`.
+### What we're doing:
+Create a generic class to hold paginated data and metadata.
 
-```java
-// src/main/java/com/example/product/repository/ProductRepository.java
-package com.example.product.repository;
-
-import com.example.product.entity.Product;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.JpaSpecificationExecutor; // ← ADD THIS
-
-public interface ProductRepository extends JpaRepository<Product, Long>, 
-                                           JpaSpecificationExecutor<Product> { // ← ADD THIS
-    // Now you have access to findAll(Specification)
-}
-```
-
-### Step 2: Create a Search Request DTO
-```java
-// src/main/java/com/example/product/dto/request/ProductSearchRequest.java
-package com.example.product.dto.request;
-
-import lombok.*;
-
-@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
-public class ProductSearchRequest {
-    private String name;
-    private Long categoryId;
-    private Double minPrice;
-    private Double maxPrice;
-}
-```
-
-### Step 3: Build the Specification in the Service
-This is where the magic happens. We use the `CriteriaBuilder` to create SQL conditions dynamically.
+### The Code:
+Create file: `src/main/java/com/example/demo/common/Paging.java`
 
 ```java
-// In ProductService.java
-import org.springframework.data.jpa.domain.Specification;
-import jakarta.persistence.criteria.Predicate;
-import java.util.ArrayList;
+package com.example.demo.common;
+
+import lombok.Builder;
+import lombok.Getter;
 import java.util.List;
 
+@Getter
+@Builder
+public class Paging<T> {
+    private List<T> items;        // The actual data for this page
+    private int page;             // Current page number (starts at 0)
+    private int size;             // How many items per page
+    private long totalElements;   // Total number of items in the database
+    private int totalPages;       // Total number of pages
+}
+```
+
+### 📝 After the Code - What Just Happened?
+- `<T>` is a **Generic type**. It means this class can hold any type of data: `Paging<ProductResponse>`, `Paging<CategoryResponse>`, etc.
+- `items`: The actual list of data for the current page.
+- `page`: The current page number. Spring starts counting at 0 (so page 0 is the first page).
+- `totalElements`: How many items exist in total across ALL pages.
+- `totalPages`: How many pages exist in total.
+
+### 📦 Imports to Remember
+```java
+import lombok.Builder;
+import lombok.Getter;
+import java.util.List;
+```
+
+---
+
+## 🛠️ Step 2: Update the Repository
+
+### What we're doing:
+Add a method that returns a `Page<Product>` instead of a `List<Product>`.
+
+### The Code:
+**Update:** `src/main/java/com/example/demo/repository/ProductRepository.java`
+
+```java
+package com.example.demo.repository;
+
+import com.example.demo.entity.Product;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+public interface ProductRepository extends JpaRepository<Product, Long> {
+
+    // Fetch products with their categories in ONE query (prevents N+1 problem)
+    @Query("SELECT p FROM Product p JOIN FETCH p.category")
+    Page<Product> findAllWithCategory(Pageable pageable);
+}
+```
+
+### 📝 After the Code - What Just Happened?
+- `Page<Product>`: Instead of returning a simple `List`, this returns a `Page` object that contains the data AND metadata (total count, total pages).
+- `Pageable pageable`: This is the input. Spring automatically converts URL parameters like `?page=0&size=10&sort=price,asc` into this object.
+- `@Query("SELECT p FROM Product p JOIN FETCH p.category")`: This is **critical for performance**. It tells JPA to load the product AND its category in a single SQL query. Without `JOIN FETCH`, JPA would run one query for products, then one query PER PRODUCT to load each category (the N+1 problem).
+
+### 📦 Imports to Remember
+```java
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Query;
+```
+
+### 💡 Note
+> **The N+1 Problem**: If you have 20 products and use `LAZY` loading without `JOIN FETCH`, JPA runs 1 query to get products + 20 queries to get each product's category = 21 queries total! With `JOIN FETCH`, it runs just 1 query. Always use `JOIN FETCH` when you know you'll need the related data.
+
+---
+
+## 🛠️ Step 3: Update the Service
+
+### What we're doing:
+Add a paginated method to the ProductService.
+
+### The Code:
+
+**Update interface:** `src/main/java/com/example/demo/service/ProductService.java`
+```java
+import com.example.demo.common.Paging;
+import org.springframework.data.domain.Pageable;
+
+// Add this method to the interface:
+Paging<ProductResponse> getAllPaged(Pageable pageable);
+```
+
+**Update implementation:** `src/main/java/com/example/demo/service/impl/ProductServiceImpl.java`
+```java
+@Override
 @Transactional(readOnly = true)
-public List<ProductResponse> searchProducts(ProductSearchRequest searchReq) {
-    
-    // 1. Create a Specification that builds the WHERE clause
-    Specification<Product> spec = (root, query, criteriaBuilder) -> {
-        
-        List<Predicate> predicates = new ArrayList<>();
+public Paging<ProductResponse> getAllPaged(Pageable pageable) {
+    // 1. Fetch one page of products (with categories) from the database
+    Page<Product> productPage = productRepository.findAllWithCategory(pageable);
 
-        // IF name is provided, add: WHERE name LIKE '%keyword%'
-        if (searchReq.getName() != null && !searchReq.getName().isBlank()) {
-            predicates.add(criteriaBuilder.like(
-                    criteriaBuilder.lower(root.get("name")), 
-                    "%" + searchReq.getName().toLowerCase() + "%"
-            ));
-        }
-
-        // IF categoryId is provided, add: WHERE category.id = ?
-        if (searchReq.getCategoryId() != null) {
-            predicates.add(criteriaBuilder.equal(
-                    root.get("category").get("id"), 
-                    searchReq.getCategoryId()
-            ));
-        }
-
-        // IF minPrice is provided, add: WHERE price >= ?
-        if (searchReq.getMinPrice() != null) {
-            predicates.add(criteriaBuilder.greaterThanOrEqualTo(
-                    root.get("price"), 
-                    searchReq.getMinPrice()
-            ));
-        }
-
-        // IF maxPrice is provided, add: WHERE price <= ?
-        if (searchReq.getMaxPrice() != null) {
-            predicates.add(criteriaBuilder.lessThanOrEqualTo(
-                    root.get("price"), 
-                    searchReq.getMaxPrice()
-            ));
-        }
-
-        // Combine all conditions with AND
-        return criteriaBuilder.and(predicates.toArray(new Predicate[0]));
-    };
-
-    // 2. Execute the query
-    List<Product> products = productRepository.findAll(spec);
-    
-    // 3. Map to DTOs
-    return products.stream()
+    // 2. Convert entities to DTOs
+    List<ProductResponse> items = productPage.getContent().stream()
             .map(productMapper::toResponse)
             .toList();
+
+    // 3. Build and return the Paging wrapper
+    return Paging.<ProductResponse>builder()
+            .items(items)
+            .page(productPage.getNumber())
+            .size(productPage.getSize())
+            .totalElements(productPage.getTotalElements())
+            .totalPages(productPage.getTotalPages())
+            .build();
 }
 ```
 
-### Step 4: Add the Controller Endpoint
+### 📝 After the Code - What Just Happened?
+1. `productRepository.findAllWithCategory(pageable)`: Fetches only the requested page (e.g., 10 items) with categories loaded efficiently.
+2. `productPage.getContent()`: Gets the actual list of products from the Page object.
+3. `.map(productMapper::toResponse)`: Converts each Product entity to a ProductResponse DTO.
+4. We build the `Paging` wrapper with the data and all the metadata.
+
+### 📦 Imports to Remember
 ```java
-// In ProductController.java
-@PostMapping("/search")
-public ResponseEntity<List<ProductResponse>> searchProducts(
-        @RequestBody ProductSearchRequest searchRequest) {
-    return ResponseEntity.ok(productService.searchProducts(searchRequest));
+import com.example.demo.common.Paging;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+```
+
+---
+
+## 🛠️ Step 4: Update the Controller
+
+### What we're doing:
+Add a new endpoint that accepts pagination parameters from the URL.
+
+### The Code:
+**Update:** `src/main/java/com/example/demo/controller/ProductController.java`
+
+```java
+import com.example.demo.common.Paging;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
+
+// Add this new endpoint:
+@GetMapping("/paged")
+public ResponseEntity<HttpBodyResponse<Paging<ProductResponse>>> getAllPaged(
+        @PageableDefault(size = 10, sort = "id") Pageable pageable) {
+    return responseSucceed(productService.getAllPaged(pageable));
 }
 ```
-*(Note: We use POST for search because the search criteria object is complex. Some prefer GET with query params, but POST is cleaner for complex filters).*
+
+### 📝 After the Code - What Just Happened?
+- `@PageableDefault(size = 10, sort = "id")`: If the client doesn't specify page size or sort order, we default to 10 items per page, sorted by ID.
+- `Pageable pageable`: Spring **automatically** reads URL parameters (`?page=0&size=5&sort=price,desc`) and converts them into this object. You don't need to parse anything manually!
+
+### 📦 Imports to Remember
+```java
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
+import com.example.demo.common.Paging;
+```
 
 ---
 
-## 🚀 Run and Test
+## 🧪 Run & Test
 
-**Test 1: Search by name and max price**
+### Test 1: Get page 0, 5 items per page
 ```bash
-curl -X POST http://localhost:8080/api/products/search \
--H "Content-Type: application/json" \
--d '{
-  "name": "mouse",
-  "maxPrice": 50.00
-}'
+curl "http://localhost:8081/api/v1/products/paged?page=0&size=5"
 ```
-**Expected:** Returns only products with "mouse" in the name AND price <= 50.
 
-**Test 2: Search by category only**
-```bash
-curl -X POST http://localhost:8080/api/products/search \
--H "Content-Type: application/json" \
--d '{
-  "categoryId": 1
-}'
+**Expected Response:**
+```json
+{
+  "status": 200,
+  "message": "Success",
+  "data": {
+    "items": [ ... 5 products ... ],
+    "page": 0,
+    "size": 5,
+    "totalElements": 25,
+    "totalPages": 5
+  }
+}
 ```
-**Expected:** Returns all products in category 1.
 
-**Test 3: Empty search (Returns everything)**
+### Test 2: Get page 1, sorted by price descending
 ```bash
-curl -X POST http://localhost:8080/api/products/search \
--H "Content-Type: application/json" \
--d '{}'
+curl "http://localhost:8081/api/v1/products/paged?page=1&size=5&sort=price,desc"
 ```
-**Expected:** Returns all products.
+
+### Test 3: Use defaults (10 items, sorted by id)
+```bash
+curl "http://localhost:8081/api/v1/products/paged"
+```
 
 ---
 
-## 🚨 Common Errors
-1. **`Invalid path: 'category.id'`**: You tried to access `root.get("category").get("id")` but the relationship isn't loaded. *Fix:* Ensure the entity mapping is correct, or use `root.join("category").get("id")`.
-2. **Case sensitivity in search**: "Mouse" doesn't match "mouse". *Fix:* Use `criteriaBuilder.lower()` as shown in the code above to make it case-insensitive.
+## ⚠️ Common Mistakes
+
+| Mistake | Why It Happens | How to Fix |
+|---------|---------------|------------|
+| `LazyInitializationException` in response | Category not loaded during pagination | Use `JOIN FETCH` in the repository query |
+| Page numbers start at 1 | Spring uses 0-based indexing | Page 0 is the first page, page 1 is the second |
+| `sort` parameter not working | Wrong format in URL | Use `sort=fieldName,direction` (e.g., `sort=price,asc`) |
 
 ---
 
-## 🛠️ Exercise
-1. Add a `minStock` and `maxStock` filter to the `ProductSearchRequest`.
-2. Update the Specification to include these stock filters.
-3. Test it with `curl`.
+## ✏️ Exercise
+
+1. Add pagination to the Category API: `GET /api/v1/categories/paged`
+2. Create a `findAllPaged(Pageable pageable)` method in `CategoryRepository`
+3. Wire it through the Service and Controller
+4. Test with `curl`
 
 ---
 
 ## 🧠 Quiz
-1. Why is the "Method Explosion" bad?
-2. What interface must a Repository extend to use Specifications?
-3. How do you combine multiple `Predicate` conditions in the CriteriaBuilder?
+
+1. Why is pagination important for large datasets?
+2. What does `JOIN FETCH` do and why do we need it with pagination?
+3. If you have 100 products and use `size=10`, how many total pages will there be?
 
 ---
 

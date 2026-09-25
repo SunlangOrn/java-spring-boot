@@ -1,162 +1,255 @@
-# 📘 Phase 3, Lesson 4: Transactions & Concurrency (Locking)
-
-## 📋 Table of Contents
-- [Learning Goals](#-learning-goals)
-- [The Problem: The "Lost Update"](#-the-problem-the-lost-update)
-- [The Solution: Optimistic Locking](#-the-solution-optimistic-locking)
-- [Step-by-Step Build](#-step-by-step-build)
-- [Run and Test](#-run-and-test)
-- [Exercise](#-exercise)
-- [Quiz](#-quiz)
+# 📘 Phase 3, Lesson 4: Caching with Redis
 
 ---
 
-## 🎯 Learning Goals
-- ✅ Understand the "Lost Update" concurrency problem.
-- ✅ Implement Optimistic Locking using `@Version`.
-- ✅ Handle `ObjectOptimisticLockingFailureException` gracefully.
+## 🎯 Goal
+Add Redis caching to the Product API so frequently requested data is served instantly without hitting the database every time.
 
 ---
 
-## 🚨 The Problem: The "Lost Update"
+## 🧠 The Big Picture
 
-Imagine two users (Alice and Bob) are trying to buy the last "Gaming Laptop" (Stock = 1) at the exact same millisecond.
+Imagine a popular restaurant:
+- The waiter (API) asks the chef (Database) for the menu.
+- The chef takes 5 minutes to write it out.
+- Every single customer asks for the menu. The chef writes it out 100 times!
 
-1. **Alice** clicks "Buy". App reads stock: `1`.
-2. **Bob** clicks "Buy". App reads stock: `1`.
-3. **Alice's** app calculates: `1 - 1 = 0`. App saves stock: `0`.
-4. **Bob's** app calculates: `1 - 1 = 0`. App saves stock: `0`.
+**Smart solution**: The waiter writes the menu on a whiteboard (Cache) near the entrance. Now, when customers ask, the waiter just points to the whiteboard. **Instant answer, zero work for the chef.**
 
-**Result:** You just sold 2 laptops, but you only had 1 in the database! The stock is 0, but you oversold. This is the **Lost Update** problem.
-
----
-
-## 💡 The Solution: Optimistic Locking
-
-**Optimistic Locking** assumes conflicts are rare. It doesn't lock the database row. Instead, it adds a "version number" to the row.
-
-1. Alice reads Product (Stock=1, **Version=1**).
-2. Bob reads Product (Stock=1, **Version=1**).
-3. Alice saves: "Update stock to 0, **but only if Version is still 1**." (Succeeds. DB Version becomes 2).
-4. Bob saves: "Update stock to 0, **but only if Version is still 1**." **FAILS!** Because the version is now 2. Bob's transaction is rejected, and you tell him "Sorry, item just sold out."
+That's what Redis does. It stores frequently used data in **memory** (RAM), which is 100x faster than reading from a database (disk).
 
 ---
 
-## 🛠️ Step-by-Step Build
+## 📖 Key Words
 
-### Step 1: Add `@Version` to the Entity
-```java
-// src/main/java/com/example/product/entity/Product.java
-package com.example.product.entity;
+| Word | Simple Meaning |
+|------|---------------|
+| **Cache** | A temporary storage for frequently used data |
+| **Redis** | A super-fast, in-memory database used for caching |
+| **Cache Hit** | The data was found in the cache (fast!) |
+| **Cache Miss** | The data was NOT in the cache, so we had to go to the database (slow) |
+| **Cache Evict** | Removing old data from the cache when it changes |
+| **TTL** | Time To Live - how long data stays in the cache before expiring |
 
-import jakarta.persistence.*;
-import lombok.*;
+---
 
-@Entity
-@Table(name = "products")
-@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
-public class Product {
+## 🛠️ Step 1: Add Redis to Docker Compose
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+### What we're doing:
+Start a Redis container alongside our existing PostgreSQL and pgAdmin containers.
 
-    private String name;
-    private Double price;
-    private Integer stock;
+### The Code:
+**Update:** `docker-compose.yml` (in the project root)
 
-    // THE MAGIC ANNOTATION
-    @Version
-    private Integer version; 
-    
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "category_id")
-    private Category category;
-}
+Add this new service:
+
+```yaml
+  redis:
+    image: redis:7
+    container_name: my-redis-cache
+    ports:
+      - "6379:6379"
 ```
 
-### Step 2: Add the Column via Flyway
-Create `V6__add_version_to_products.sql`:
-```sql
-ALTER TABLE products ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
+### 📝 After the Code - What Just Happened?
+- We added a new container called `my-redis-cache` using the official Redis image.
+- Port `6379` is the default Redis port (like 5432 is the default for PostgreSQL).
+- Redis stores everything in RAM, so it's incredibly fast but data is lost if the container restarts (which is fine for a cache).
+
+### 💡 Note
+> Run `docker-compose up -d` to start the new Redis container. You should see 3 containers running: postgres, pgadmin, and redis.
+
+---
+
+## 🛠️ Step 2: Add Dependencies
+
+### What we're doing:
+Add the Spring Boot libraries needed to connect to Redis and enable caching.
+
+### The Code:
+**Update:** `pom.xml`
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-data-redis</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-cache</artifactId>
+</dependency>
 ```
 
-### Step 3: Create the Buy/Decrease Stock Method
-```java
-// In ProductService.java
-@Transactional
-public void decreaseStock(Long productId, int quantity) {
-    Product product = productRepository.findById(productId)
-            .orElseThrow(() -> new ProductNotFoundException(productId));
+### 📝 After the Code - What Just Happened?
+- `spring-boot-starter-data-redis`: Gives Spring the ability to connect to and talk to Redis.
+- `spring-boot-starter-cache`: Gives us the `@Cacheable`, `@CachePut`, and `@CacheEvict` annotations.
 
-    if (product.getStock() < quantity) {
-        throw new RuntimeException("Not enough stock!");
+---
+
+## 🛠️ Step 3: Configure Redis and Enable Caching
+
+### What we're doing:
+Tell Spring where Redis is running and turn on the caching feature.
+
+### The Code:
+
+**Update:** `src/main/resources/application.yml`
+```yaml
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  cache:
+    type: redis
+    redis:
+      time-to-live: 60000  # Cache expires after 60 seconds (in milliseconds)
+```
+
+**Update:** `src/main/java/com/example/demo/DemoApplication.java`
+```java
+@SpringBootApplication
+@EnableJpaAuditing
+@EnableCaching  // <-- ADD THIS LINE
+public class DemoApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(DemoApplication.class, args);
     }
-
-    product.setStock(product.getStock() - quantity);
-    // We don't need to manually increment the version. 
-    // Hibernate does it automatically when we call save()!
-    productRepository.save(product); 
 }
 ```
 
-### Step 4: Handle the Lock Exception Globally
-When Bob's transaction fails, Hibernate throws an `ObjectOptimisticLockingFailureException`. Let's catch it.
+### 📝 After the Code - What Just Happened?
+- `spring.data.redis.host`: Tells Spring "Redis is running on my local machine."
+- `time-to-live: 60000`: Data in the cache will automatically expire after 60 seconds. This prevents stale data.
+- `@EnableCaching`: This is the switch that turns on Spring's caching system. Without it, all the `@Cacheable` annotations will be ignored.
+
+### 📦 Imports to Remember
+```java
+import org.springframework.cache.annotation.EnableCaching;
+```
+
+---
+
+## 🛠️ Step 4: Add Caching to the Service
+
+### What we're doing:
+Tell Spring to cache the results of `getAllProducts()` and `getProductById()`.
+
+### The Code:
+**Update:** `src/main/java/com/example/demo/service/impl/ProductServiceImpl.java`
 
 ```java
-// In GlobalExceptionHandler.java
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.CacheEvict;
 
-@ExceptionHandler(ObjectOptimisticLockingFailureException.class)
-public ResponseEntity<Map<String, Object>> handleLockException(ObjectOptimisticLockingFailureException ex) {
-    Map<String, Object> body = new HashMap<>();
-    body.put("timestamp", LocalDateTime.now());
-    body.put("status", HttpStatus.CONFLICT.value()); // 409 Conflict
-    body.put("error", "Data Conflict");
-    body.put("message", "This product was updated by another user. Please refresh and try again.");
-    
-    return new ResponseEntity<>(body, HttpStatus.CONFLICT);
+// ... inside the class ...
+
+@Override
+@Cacheable(value = "products")  // Cache the result under the name "products"
+@Transactional(readOnly = true)
+public List<ProductResponse> getAllProducts() {
+    System.out.println(">>> FETCHING FROM DATABASE (SLOW!) <<<");
+    return productRepository.findAll().stream()
+            .map(productMapper::toResponse)
+            .toList();
+}
+
+@Override
+@Cacheable(value = "product", key = "#id")  // Cache each product by its ID
+@Transactional(readOnly = true)
+public ProductResponse getProductById(Long id) {
+    System.out.println(">>> FETCHING PRODUCT " + id + " FROM DATABASE <<<");
+    Product product = productRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException(
+                "Product not found with id: " + id));
+    return productMapper.toResponse(product);
+}
+
+@Override
+@CacheEvict(value = {"products", "product"}, allEntries = true)  // Clear cache when data changes
+@Transactional
+public ProductResponse addProduct(ProductRequest request) {
+    // ... existing code ...
 }
 ```
 
----
+### 📝 After the Code - What Just Happened?
+- `@Cacheable(value = "products")`: The first time `getAllProducts()` is called, Spring runs the method, saves the result in Redis under the name "products", and returns it. The **second** time, Spring skips the method entirely and returns the cached result from Redis.
+- `@Cacheable(value = "product", key = "#id")`: Each product is cached separately by its ID. So product 1 and product 2 have different cache entries.
+- `@CacheEvict(value = {"products", "product"}, allEntries = true)`: When a new product is created, we **clear the entire cache**. This ensures the next GET request fetches fresh data from the database.
+- The `System.out.println` lines are temporary. They help you SEE whether the cache is working (you'll see the message on cache miss, but NOT on cache hit).
 
-## 🚀 Run and Test
-
-To truly test this, you need to simulate two concurrent requests. You can use a tool like **JMeter** or **Apache Bench**, or simply run this bash script in two terminals at the exact same time:
-
-**Terminal 1 & 2 (Run simultaneously):**
-```bash
-curl -X POST http://localhost:8080/api/products/1/buy \
--H "Content-Type: application/json" \
--d '{"quantity": 1}'
+### 📦 Imports to Remember
+```java
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.CacheEvict;
 ```
 
-**Expected Result:**
-- One terminal gets `200 OK`.
-- The other terminal gets `409 Conflict` with the message: *"This product was updated by another user..."*
+### 💡 Note
+> **When to evict the cache**: You must add `@CacheEvict` to ALL methods that change data (create, update, delete). If you forget, users will see old, outdated data until the cache expires.
 
 ---
 
-## 🚨 Common Errors
-1. **`version` column is null**: You added `@Version` but didn't run the Flyway migration to add the column with a default value. *Fix:* Ensure `DEFAULT 0` in your SQL.
-2. **Locking doesn't work**: You forgot `@Transactional` on the service method. Optimistic locking requires a transaction to check the version at commit time.
+## 🧪 Run & Test
+
+1. Start Redis: `docker-compose up -d`
+2. Restart the app: `./mvnw spring-boot:run`
+
+### Test 1: First request (Cache MISS)
+```bash
+curl http://localhost:8081/api/v1/products
+```
+Look at the console. You will see: `>>> FETCHING FROM DATABASE (SLOW!) <<<`
+
+### Test 2: Second request (Cache HIT)
+```bash
+curl http://localhost:8081/api/v1/products
+```
+Look at the console. The print message is **GONE**! The data came from Redis instantly.
+
+### Test 3: Create a product (Cache EVICT)
+```bash
+curl -X POST http://localhost:8081/api/v1/products \
+-H "Content-Type: application/json" \
+-d '{"name": "Tablet", "price": 499.99, "description": "iPad", "categoryId": 1}'
+```
+Now call GET again. The print message returns because the cache was cleared.
 
 ---
 
-## 🛠️ Exercise
-1. Create an endpoint `PUT /api/products/{id}/price` that updates the price.
-2. Add `@Version` logic to it.
-3. Simulate two users updating the price at the same time and verify one gets a 409 Conflict.
+## ⚠️ Common Mistakes
+
+| Mistake | Why It Happens | How to Fix |
+|---------|---------------|------------|
+| `Cannot get Redis connection` | Redis container not running | Run `docker-compose up -d` |
+| Cache never updates after PUT/DELETE | Forgot `@CacheEvict` | Add `@CacheEvict` to all write methods |
+| `@Cacheable` not working | Forgot `@EnableCaching` | Add it to the main application class |
+
+---
+
+## ✏️ Exercise
+
+1. Add `@CacheEvict` to the `updateProduct()` and `deleteProduct()` methods.
+2. Test updating a product and verify the cache is cleared.
+3. Change the TTL to 30 seconds and verify the cache expires after 30 seconds.
 
 ---
 
 ## 🧠 Quiz
-1. What is the "Lost Update" problem?
-2. How does `@Version` prevent it without locking the database row?
-3. What HTTP status code is most appropriate for a concurrency conflict?
+
+1. What is the difference between a Cache Hit and a Cache Miss?
+2. Why must we use `@CacheEvict` when creating, updating, or deleting data?
+3. What does `time-to-live: 60000` mean?
 
 ---
 
+## 🎉 Phase 3 Complete!
+
+You have learned:
+- ✅ Database relationships (One-to-Many)
+- ✅ Category CRUD with DTOs
+- ✅ Pagination and sorting with JOIN FETCH
+- ✅ Redis caching with @Cacheable and @CacheEvict
+
 ## 🛑 STOP
-Reply with your exercise code and quiz answers before moving to Lesson 5.
+Reply with **"Phase 3 Complete"** and your exercise/quiz answers. Next is **Phase 4: Spring Security**!
