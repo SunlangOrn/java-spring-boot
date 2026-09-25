@@ -1,25 +1,15 @@
 # 📘 Phase 4, Lesson 4: Permissions & Method Security (`@PreAuthorize`)
 
-## 📋 Table of Contents
-- [Learning Goals](#-learning-goals)
-- [The Concept: Roles vs. Permissions](#-the-concept-roles-vs-permissions)
-- [Step 1: Update Database Schema](#-step-1-update-database-schema)
-- [Step 2: Update Entities & UserDetailsService](#-step-2-update-entities--userdetailsservice)
-- [Step 3: Apply Method Security](#-step-3-apply-method-security)
-- [Run and Test](#-run-and-test)
-- [Exercise](#-exercise)
-- [Quiz](#-quiz)
-
 ---
 
-## 🎯 Learning Goals
+## 🎯 Goal
 - ✅ Understand the difference between Roles and Permissions.
 - ✅ Implement a dynamic Permission system in the database.
 - ✅ Secure specific methods using `@PreAuthorize`.
 
 ---
 
-## 💡 The Concept: Roles vs. Permissions
+## 🧠 The Big Picture
 
 **Roles** are job titles: `ADMIN`, `USER`, `MANAGER`.
 **Permissions** are specific actions: `PRODUCT_CREATE`, `PRODUCT_DELETE`, `USER_VIEW`.
@@ -30,10 +20,24 @@ If you use **Permissions**, you just assign the `PRODUCT_DELETE` permission to t
 
 ---
 
-## 🛠️ Step-by-Step Build
+## 📖 Key Words
 
-### Step 1: Update Database Schema
-Create `V8__create_permissions.sql`:
+| Word | Simple Meaning |
+|------|---------------|
+| **Role** | A job title or group (e.g., ADMIN). |
+| **Permission (Authority)** | A specific action (e.g., PRODUCT_DELETE). |
+| **`@PreAuthorize`** | An annotation that checks if the user has the required permission *before* the method runs. |
+| **`@EnableMethodSecurity`** | The switch that turns on `@PreAuthorize`. |
+
+---
+
+## 🛠️ Step 1: Update Database Schema
+
+### What we're doing:
+Create tables for `permissions` and link them to `roles`.
+
+### The Code:
+Create file: `src/main/resources/db/migration/V7__create_permissions.sql`
 
 ```sql
 CREATE TABLE permissions (
@@ -64,30 +68,36 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p WHERE r.name = 'ROLE_USER' AND p.name = 'PRODUCT_READ';
 ```
 
-### Step 2: Update Entities & UserDetailsService
+### 📝 After the Code - What Just Happened?
+- We created a many-to-many relationship between Roles and Permissions.
+- We pre-loaded 4 permissions and assigned them to the roles.
 
-**Permission Entity:**
+---
+
+## 🛠️ Step 2: Update Entities & UserDetailsService
+
+### What we're doing:
+Create the Permission entity, link it to Role, and pass the permissions to Spring Security.
+
+### The Code:
+
+**File 1:** `src/main/java/com/example/demo/entity/Permission.java`
 ```java
-// src/main/java/com/example/product/entity/security/Permission.java
-package com.example.product.entity.security;
+package com.example.demo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
 @Table(name = "permissions")
-@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
-public class Permission {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
+@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+public class Permission extends BaseEntity {
     @Column(nullable = false, unique = true)
     private String name;
 }
 ```
 
-**Update Role Entity:**
+**File 2:** Update `Role.java` to include permissions
 ```java
 // Add to Role.java
 @ManyToMany(fetch = FetchType.EAGER)
@@ -100,11 +110,9 @@ public class Permission {
 private Set<Permission> permissions = new HashSet<>();
 ```
 
-**Update CustomUserDetailsService:**
-We need to pass the Permissions to Spring Security as `GrantedAuthority`.
-
+**File 3:** Update `CustomUserDetailsService.java` to load permissions
 ```java
-// In CustomUserDetailsService.java, inside loadUserByUsername:
+// Inside loadUserByUsername, replace the authorities logic with this:
 
 // 1. Get Roles
 var authorities = new HashSet<org.springframework.security.core.GrantedAuthority>();
@@ -129,67 +137,87 @@ return org.springframework.security.core.userdetails.User.builder()
         .build();
 ```
 
-### Step 3: Apply Method Security
+### 📝 After the Code - What Just Happened?
+- When a user logs in, Spring Security now loads both their Roles AND their Permissions.
+- Both are treated as "Authorities" internally.
 
-First, enable method security in your config:
+---
+
+## 🛠️ Step 3: Apply Method Security
+
+### What we're doing:
+Turn on method security and protect the Product endpoints.
+
+### The Code:
+
+**Step A:** Enable method security in `SecurityConfig.java`
 ```java
-// In SecurityConfig.java or ProductApplication.java
-import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
-
-@EnableMethodSecurity // ← ADD THIS! Allows @PreAuthorize
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity // <-- ADD THIS! Allows @PreAuthorize
 public class SecurityConfig { ... }
 ```
 
-Now, update the `ProductController`:
-
+**Step B:** Update `ProductController.java`
 ```java
-// In ProductController.java
 import org.springframework.security.access.prepost.PreAuthorize;
+
+// ... inside ProductController ...
 
 @PostMapping
 @PreAuthorize("hasAuthority('PRODUCT_CREATE')") // Checks for the specific permission!
-public ResponseEntity<ProductResponse> createProduct(...) { ... }
+public ResponseEntity<HttpBodyResponse<ProductResponse>> create(...) { ... }
 
 @DeleteMapping("/{id}")
 @PreAuthorize("hasAuthority('PRODUCT_DELETE')")
-public ResponseEntity<Void> deleteProduct(...) { ... }
+public ResponseEntity<HttpBodyResponse<Void>> delete(...) { ... }
 
 @GetMapping
 @PreAuthorize("hasAuthority('PRODUCT_READ')")
-public ResponseEntity<List<ProductResponse>> getAllProducts() { ... }
+public ResponseEntity<HttpBodyResponse<List<ProductResponse>>> getAll() { ... }
+```
+
+### 📝 After the Code - What Just Happened?
+- `@EnableMethodSecurity`: Turns on the ability to use `@PreAuthorize`.
+- `@PreAuthorize("hasAuthority('PRODUCT_CREATE')")`: Before this method runs, Spring checks if the logged-in user has the `PRODUCT_CREATE` permission. If not, it throws a `403 Forbidden`.
+
+### 📦 Imports to Remember
+```java
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 ```
 
 ---
 
-## 🚀 Run and Test
+## 🧪 Run & Test
 
+### Test 1: Login as USER (john_doe) and try to DELETE
 ```bash
-./mvnw spring-boot:run
+curl -u john_doe:securePassword123 -X DELETE http://localhost:8081/api/v1/products/1
 ```
+**Expected:** `403 Forbidden`. John has `PRODUCT_READ`, but not `PRODUCT_DELETE`.
 
-**Test 1: Login as USER (john_doe) and try to DELETE**
+### Test 2: Login as ADMIN and try to DELETE
 ```bash
-curl -u john_doe:securePassword123 -X DELETE http://localhost:8080/api/products/1
+curl -u admin:admin123 -X DELETE http://localhost:8081/api/v1/products/1
 ```
-*Expected:* `403 Forbidden`. John has `PRODUCT_READ`, but not `PRODUCT_DELETE`.
-
-**Test 2: Login as ADMIN and try to DELETE**
-```bash
-curl -u admin:admin123 -X DELETE http://localhost:8080/api/products/1
-```
-*Expected:* `204 No Content` (or 200). Admin has `PRODUCT_DELETE`.
+**Expected:** `200 OK`. Admin has `PRODUCT_DELETE`.
 
 ---
 
-## 🚨 Common Errors
-1. **`@PreAuthorize` is ignored**: You forgot to add `@EnableMethodSecurity` to your configuration class.
-2. **`403 Forbidden` for Admin**: The `role_permissions` mapping table is empty. Check your Flyway migration `V8`.
-3. **`LazyInitializationException`**: When loading permissions in `UserDetailsService`. *Fix:* Ensure `@ManyToMany` for permissions uses `FetchType.EAGER`, or keep the whole `loadUserByUsername` method inside a `@Transactional` block.
+## ⚠️ Common Mistakes
+
+| Mistake | Why It Happens | How to Fix |
+|---------|---------------|------------|
+| `@PreAuthorize` is ignored | You forgot to add `@EnableMethodSecurity`. | Add it to `SecurityConfig`. |
+| `403 Forbidden` for Admin | The `role_permissions` mapping table is empty. | Check your Flyway migration `V7`. |
+| `LazyInitializationException` | Permissions not loaded during login. | Ensure `@ManyToMany` for permissions uses `FetchType.EAGER`. |
 
 ---
 
-## 🛠️ Exercise
-1. Create a new role in the DB called `ROLE_MANAGER`.
+## ✏️ Exercise
+
+1. Create a new role in the DB called `ROLE_MANAGER` (via Flyway or pgAdmin).
 2. Assign `PRODUCT_READ`, `PRODUCT_CREATE`, and `PRODUCT_UPDATE` to `ROLE_MANAGER` (but NOT delete).
 3. Register a user with the `ROLE_MANAGER` role.
 4. Verify they can POST (create) but cannot DELETE.
@@ -197,6 +225,7 @@ curl -u admin:admin123 -X DELETE http://localhost:8080/api/products/1
 ---
 
 ## 🧠 Quiz
+
 1. What is the main advantage of using Permissions instead of just Roles?
 2. What annotation enables `@PreAuthorize` in Spring Boot?
 3. What is the difference between `hasRole('ADMIN')` and `hasAuthority('PRODUCT_DELETE')`?
@@ -212,6 +241,6 @@ You have successfully built a complete, database-driven Authentication and Autho
 - ✅ Method security (`@PreAuthorize`) protects specific endpoints.
 
 ## 🛑 STOP
-Reply with "Phase 4 Complete" and your exercise results. 
+Reply with **"Phase 4 Complete"** and your exercise results. 
 
-Next, we will enter **Phase 5: JWT (JSON Web Tokens)**. We will replace HTTP Basic Auth with industry-standard Access and Refresh tokens, making our API ready for modern frontend frameworks (React, Angular, Mobile apps)!
+Next, we will enter **Phase 5: JWT (JSON Web Tokens)**. We will replace HTTP Basic Auth with industry-standard Access and Refresh tokens, making our API ready for modern frontend frameworks!

@@ -1,119 +1,97 @@
 # 📘 Phase 4, Lesson 1: Authentication, Authorization & Password Hashing
 
-## 📋 Table of Contents
-- [Learning Goals](#-learning-goals)
-- [The Core Concepts (Analogies)](#-the-core-concepts-analogies)
-- [Why We NEVER Store Plain-Text Passwords](#-why-we-never-store-plain-text-passwords)
-- [Step 1: Add Spring Security](#-step-1-add-spring-security)
-- [Step 2: Design the Database Schema](#-step-2-design-the-database-schema)
-- [Step 3: Create the JPA Entities](#-step-3-create-the-jpa-entities)
-- [Step 4: Test Password Hashing (BCrypt)](#-step-4-test-password-hashing-bcrypt)
-- [Run and Test](#-run-and-test)
-- [Common Errors](#-common-errors)
-- [Exercise](#-exercise)
-- [Quiz](#-quiz)
-
 ---
 
-## 🎯 Learning Goals
+## 🎯 Goal
 - ✅ Understand the difference between Authentication and Authorization.
-- ✅ Understand why and how we hash passwords using BCrypt.
-- ✅ Design a professional database schema for Users and Roles.
-- ✅ Create the JPA Entities for the security system.
+- ✅ Understand why we NEVER store plain-text passwords.
+- ✅ Create `User` and `Role` database tables.
+- ✅ Learn how to hash passwords using BCrypt.
 
 ---
 
-## 🏢 The Core Concepts (Analogies)
+## 🧠 The Big Picture
 
-Before writing code, you must understand the two pillars of security. Imagine your application is a **Corporate Office Building**.
+### 1. Authentication vs. Authorization (The Club Analogy)
+Imagine a VIP nightclub:
+- **Authentication (AuthN)**: The bouncer checks your ID at the door. *"Who are you?"* You prove you are "John" by showing your ID (Username + Password).
+- **Authorization (AuthZ)**: Once inside, the bouncer checks your wristband. *"What are you allowed to do?"* Your wristband lets you into the main bar, but blocks you from the VIP room. 
 
-### 1. Authentication (Who are you?)
-- **Analogy:** Scanning your ID badge at the front door. 
-- **Meaning:** The system verifies your identity. You prove you are "John" by providing a username and password.
-- **Spring Security Term:** `Authentication`
+**Rule:** Authentication ALWAYS happens before Authorization. You must prove who you are before the system checks what you can do.
 
-### 2. Authorization (What are you allowed to do?)
-- **Analogy:** Your ID badge lets you into the main lobby and your office on the 3rd floor, but it **blocks** you from entering the CEO's office or the Server Room.
-- **Meaning:** The system checks your permissions. Even though you are authenticated as "John", you are not allowed to delete all products.
-- **Spring Security Terms:** `Authorization`, `Roles`, `Authorities`
+### 2. Password Hashing (The Blender Analogy)
+We **NEVER** save passwords as plain text (e.g., "mySecret123"). If a hacker steals the database, they have everyone's passwords.
 
-**Rule of Thumb:** Authentication always happens *before* Authorization. You must prove who you are before the system checks what you can do.
-
----
-
-## 🔒 Why We NEVER Store Plain-Text Passwords
-
-Imagine you store passwords in the database like this:
-```text
-ID | Username | Password
-1  | john     | mySecretPassword123
-```
-If a hacker steals your database, they instantly have everyone's passwords. (And because people reuse passwords, the hacker can now log into their bank accounts!)
-
-### The Solution: Hashing (The Blender Analogy)
-A **Hash Function** (like BCrypt) is like a meat grinder. 
-1. You put a steak (the password) into the grinder.
-2. It comes out as ground meat (the hash).
-3. **Crucial:** You *cannot* turn the ground meat back into a steak. It is a **one-way** process.
-
-When John registers:
-1. John types: `mySecretPassword123`
-2. Spring puts it through the BCrypt grinder.
-3. The database stores the ground meat: `$2a$10$N9qo8uLOickgx2ZMRZoMye...`
-
-When John logs in:
-1. John types: `mySecretPassword123`
-2. Spring puts it through the grinder again.
-3. Spring compares the new ground meat with the ground meat in the database.
-4. If they match, John is in!
+Instead, we use a **Hash Function** (like BCrypt). 
+- Think of it like a meat grinder. You put a steak (the password) in, and it comes out as ground meat (the hash).
+- **Crucial:** You cannot turn the ground meat back into a steak. It is a **one-way** process.
+- When John logs in, we grind the password he typed. If the ground meat matches the ground meat in the database, he is allowed in!
 
 ---
 
-## 🛠️ Step-by-Step Build
+## 📖 Key Words
 
-### Step 1: Add Spring Security
-Open your `pom.xml` and add the Spring Security starter:
+| Word | Simple Meaning |
+|------|---------------|
+| **Authentication** | Verifying *who* the user is (Login). |
+| **Authorization** | Verifying *what* the user is allowed to do (Permissions/Roles). |
+| **Hash** | A one-way mathematical transformation of data (like a fingerprint). |
+| **Salt** | Random data added to a password before hashing, so two identical passwords look completely different in the database. |
+| **BCrypt** | The industry-standard hashing algorithm used by Spring Security. |
+
+---
+
+## 🛠️ Step 1: Add Spring Security Dependency
+
+### What we're doing:
+Tell Spring Boot we want to use its built-in security features.
+
+### The Code:
+**Update:** `pom.xml`
 
 ```xml
-<dependencies>
-    <!-- ... your other dependencies ... -->
-
-    <!-- Spring Security -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-security</artifactId>
-    </dependency>
-</dependencies>
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-security</artifactId>
+</dependency>
 ```
 
-⚠️ **WARNING:** As soon as you add this dependency and restart your app, **ALL** your existing endpoints (like `/api/products`) will be blocked and require a login! Spring Boot's default security is "block everything". Don't panic, we will configure it in the next lesson. For now, just add the dependency.
+### 📝 After the Code - What Just Happened?
+Spring Security is now active. 
+⚠️ **WARNING:** By default, Spring Security locks down **everything**. If you restart your app right now, all your `/api/v1/products` endpoints will return `401 Unauthorized`. Don't panic! We will configure this in the next lesson. For now, we just need the library to get the password hasher.
+
+### 📦 Imports to Remember
+None needed for `pom.xml`, but remember to run `mvn clean install` or let your IDE reload the Maven dependencies.
 
 ---
 
-### Step 2: Design the Database Schema
+## 🛠️ Step 2: Create the Database Schema (Flyway)
 
-We need three tables: `users`, `roles`, and a mapping table `user_roles` (because a User can have many Roles, and a Role can belong to many Users -> **Many-to-Many**).
+### What we're doing:
+Create tables for `users`, `roles`, and a linking table `user_roles` (because one user can have many roles, and one role can belong to many users).
 
-Create `src/main/resources/db/migration/V7__create_users_and_roles.sql`:
+### The Code:
+Create file: `src/main/resources/db/migration/V6__create_users_and_roles.sql`
 
 ```sql
--- 1. Create the Roles table
+-- Step A: Create the roles table
 CREATE TABLE roles (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(50) NOT NULL UNIQUE
 );
 
--- 2. Create the Users table
+-- Step B: Create the users table
 CREATE TABLE users (
     id BIGSERIAL PRIMARY KEY,
     username VARCHAR(50) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL, -- Stores the BCrypt hash, NOT the plain password!
     email VARCHAR(100) NOT NULL UNIQUE,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITHOUT TIME ZONE,
+    updated_at TIMESTAMP WITHOUT TIME ZONE
 );
 
--- 3. Create the Many-to-Many mapping table
+-- Step C: Create the Many-to-Many linking table
 CREATE TABLE user_roles (
     user_id BIGINT NOT NULL,
     role_id BIGINT NOT NULL,
@@ -122,64 +100,63 @@ CREATE TABLE user_roles (
     FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
 );
 
--- 4. Insert default roles
+-- Step D: Insert default roles
 INSERT INTO roles (name) VALUES ('ROLE_USER');
 INSERT INTO roles (name) VALUES ('ROLE_ADMIN');
 ```
 
+### 📝 After the Code - What Just Happened?
+- **Step A & B**: Creates the main tables. Notice the column is named `password_hash` to remind us it's not a plain password.
+- **Step C**: Creates the linking table. `ON DELETE CASCADE` means if a user is deleted, their role links are automatically deleted too.
+- **Step D**: Pre-loads two roles into the database so we can assign them to users immediately.
+
+### 💡 Note
+> Spring Security expects role names to start with `ROLE_` (e.g., `ROLE_USER`, `ROLE_ADMIN`). Always follow this convention to avoid confusing bugs later!
+
 ---
 
-### Step 3: Create the JPA Entities
+## 🛠️ Step 3: Create the User and Role Entities
 
-Create the `entity/security` package to keep security entities organized.
+### What we're doing:
+Create the Java classes that represent these new tables.
 
-**Role Entity:**
+### The Code:
+
+**File 1:** `src/main/java/com/example/demo/entity/Role.java`
 ```java
-// src/main/java/com/example/product/entity/security/Role.java
-package com.example.product.entity.security;
+package com.example.demo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
 @Table(name = "roles")
-@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
-public class Role {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
+@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+public class Role extends BaseEntity {
+    
     @Column(nullable = false, unique = true, length = 50)
     private String name;
 }
 ```
 
-**User Entity:**
+**File 2:** `src/main/java/com/example/demo/entity/User.java`
 ```java
-// src/main/java/com/example/product/entity/security/User.java
-package com.example.product.entity.security;
+package com.example.demo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
-import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
 @Entity
 @Table(name = "users")
-@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
-public class User {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+public class User extends BaseEntity {
 
     @Column(nullable = false, unique = true, length = 50)
     private String username;
 
-    // This column stores the BCrypt hash (e.g., "$2a$10$N9qo8u...")
-    @Column(name = "password_hash", nullable = false)
+    @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash;
 
     @Column(nullable = false, unique = true, length = 100)
@@ -188,158 +165,136 @@ public class User {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
 
-    @Column(name = "created_at", updatable = false)
-    private LocalDateTime createdAt = LocalDateTime.now();
-
-    // MANY Users can have MANY Roles
-    // We use a Set because roles should be unique for a user
-    @ManyToMany(fetch = FetchType.EAGER) // EAGER is okay here because a user rarely has more than 3-4 roles
+    // A User can have MANY Roles
+    @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
         name = "user_roles",
         joinColumns = @JoinColumn(name = "user_id"),
         inverseJoinColumns = @JoinColumn(name = "role_id")
     )
-    @Builder.Default // Required by Lombok @Builder to initialize collections
+    @Builder.Default
     private Set<Role> roles = new HashSet<>();
 }
 ```
 
-**Line-by-line explanation of `@ManyToMany`:**
-- `@ManyToMany`: Tells JPA this is a many-to-many relationship.
-- `fetch = FetchType.EAGER`: When we load a User, we immediately load their Roles. (We use EAGER here because a user only has 1 or 2 roles, unlike Products in a Category which could be thousands).
-- `@JoinTable`: Tells JPA exactly which table and columns to use to link them (the `user_roles` table we created in Flyway).
+### 📝 After the Code - What Just Happened?
+- Both extend `BaseEntity`, so they automatically get `id`, `createdAt`, and `updatedAt`.
+- `@ManyToMany(fetch = FetchType.EAGER)`: We use `EAGER` here (unlike `LAZY` in Phase 3) because a user typically only has 1 or 2 roles. We want to load them immediately when we load the user for authentication.
+- `@Builder.Default`: Required by Lombok to ensure the `HashSet` is initialized properly when using the `@Builder`.
+
+### 📦 Imports to Remember
+```java
+import jakarta.persistence.*; // Entity, Table, Column, ManyToMany, JoinTable, JoinColumn, FetchType
+import java.util.HashSet;
+import java.util.Set;
+```
 
 ---
 
-### Step 4: Test Password Hashing (BCrypt)
+## 🛠️ Step 4: Test the Password Hasher (BCrypt)
 
-Before we build the login endpoint, let's prove BCrypt works. We will create a simple configuration class to expose the `PasswordEncoder` as a Spring Bean.
+### What we're doing:
+Before we build the login logic, let's prove that BCrypt works by writing a tiny test that runs when the app starts.
+
+### The Code:
+**Update:** `src/main/java/com/example/demo/DemoApplication.java`
 
 ```java
-// src/main/java/com/example/product/config/SecurityConfig.java
-package com.example.product.config;
+package com.example.demo;
 
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-@Configuration
-public class SecurityConfig {
+@SpringBootApplication
+@EnableJpaAuditing
+@EnableCaching
+public class DemoApplication {
 
-    // This creates a "grinder" (BCrypt) that Spring can inject anywhere
+    public static void main(String[] args) {
+        SpringApplication.run(DemoApplication.class, args);
+    }
+
+    // 1. Create the "Blender" (PasswordEncoder) as a Spring Bean
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
-}
-```
 
-Now, let's write a quick test in our `ProductApplication` (just for learning, we will delete this later) to see the hash:
-
-```java
-// src/main/java/com/example/product/ProductApplication.java
-package com.example.product;
-
-import com.example.product.config.SecurityConfig;
-import org.springframework.boot.CommandLineRunner;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.annotation.Bean;
-import org.springframework.security.crypto.password.PasswordEncoder;
-
-@SpringBootApplication
-public class ProductApplication {
-
-    public static void main(String[] args) {
-        SpringApplication.run(ProductApplication.class, args);
-    }
-
-    // This runs ONCE when the application starts
+    // 2. Run a quick test when the app starts
     @Bean
     CommandLineRunner testBCrypt(PasswordEncoder encoder) {
         return args -> {
-            String plainPassword = "mySecretPassword123";
+            String plainPassword = "mySecret123";
             
-            // Put it in the grinder
+            // Put it in the blender
             String hashedPassword = encoder.encode(plainPassword);
             
             System.out.println("=================================");
-            System.out.println("Plain: " + plainPassword);
-            System.out.println("Hash:  " + hashedPassword);
+            System.out.println("Plain:  " + plainPassword);
+            System.out.println("Hashed: " + hashedPassword);
             System.out.println("=================================");
             
             // Check if a raw password matches the hash
-            boolean isMatch = encoder.matches("mySecretPassword123", hashedPassword);
+            boolean isMatch = encoder.matches("mySecret123", hashedPassword);
             System.out.println("Does it match? " + isMatch);
         };
     }
 }
 ```
 
----
+### 📝 After the Code - What Just Happened?
+- `@Bean public PasswordEncoder`: We tell Spring to create one `BCryptPasswordEncoder` and share it across the whole app.
+- `CommandLineRunner`: This is a special Spring interface. Any code inside its `run` method executes exactly **once** right after the app starts.
+- `encoder.matches()`: This is the magic. It takes the plain password the user typed, hashes it with the same "salt" stored in the database hash, and checks if they match.
 
-## 🚀 Run and Test
-
-```bash
-./mvnw clean spring-boot:run
-```
-
-**Watch the console!** You will see Flyway apply `V7`, creating the tables. 
-Then, you will see the output from our `CommandLineRunner`:
-
-```text
-=================================
-Plain: mySecretPassword123
-Hash:  $2a$10$E.yjMG2qV5zXpL1wZ8qOe.uX9qJ5yT1vK8mN3bC4dE5fG6hJ7kL8
-=================================
-Does it match? true
-```
-
-*Note: If you restart the app, the Hash will be **different** every time! This is because BCrypt adds a random "salt" to the password before hashing it. This prevents hackers from using "Rainbow Tables" (pre-computed hashes). But `encoder.matches()` will still return `true`!*
+### 💡 Note
+> If you run the app multiple times, the **Hashed** string will be different every single time! This is because BCrypt adds a random "salt" every time. This is a **good thing**—it prevents hackers from using pre-computed "Rainbow Tables" to crack passwords. But `encoder.matches()` will always return `true` for the correct password.
 
 ---
 
-## 🚨 Common Errors
+## ⚠️ Common Mistakes
 
-| Error | Cause | Fix |
-|---|---|---|
-| `Relation "users" does not exist` | Flyway didn't run. | Check that `V7__create_users_and_roles.sql` is in `src/main/resources/db/migration/`. |
-| `Invalid column name password_hash` | Entity field name doesn't match DB column. | Ensure `@Column(name = "password_hash")` is on the `passwordHash` field. |
-| `Circular dependency` when injecting `PasswordEncoder` | You tried to inject it in the wrong place. | Only inject it in Services or Configuration classes, not in Entities. |
+| Mistake | Why It Happens | How to Fix |
+|---------|---------------|------------|
+| `Relation "users" does not exist` | Flyway didn't run the migration | Check the file is named `V6__...` and is in `db/migration/` |
+| `Invalid column name password_hash` | Entity field name doesn't match DB | Ensure `@Column(name = "password_hash")` is on the `passwordHash` field |
+| Hashing plain text in the Controller | Bad architecture | **Never** hash in the Controller. Always hash in the Service layer. |
 
 ---
 
-## 🛠️ Exercise
+## ✏️ Exercise
 
-1. Create a `UserRepository` interface that extends `JpaRepository<User, Long>`.
-2. Add a method to find a user by username: `Optional<User> findByUsername(String username);`
-3. Create a `RoleRepository` interface.
-4. In your `ProductApplication` `CommandLineRunner`, use the repositories to:
-   - Find the `ROLE_ADMIN` from the database.
-   - Create a new `User` (username: "admin", email: "admin@test.com", password: use the `PasswordEncoder` to hash "admin123").
-   - Add the `ROLE_ADMIN` to the user's roles set.
+1. Create `UserRepository.java` and `RoleRepository.java` extending `JpaRepository`.
+2. In `UserRepository`, add this method: `Optional<User> findByUsername(String username);`
+3. In `RoleRepository`, add this method: `Optional<Role> findByName(String name);`
+4. Update the `CommandLineRunner` in `DemoApplication` to:
+   - Find the `ROLE_ADMIN` using the repository.
+   - Create a new `User` (username: "admin", email: "admin@test.com", password: hash "admin123" using the encoder).
+   - Add `ROLE_ADMIN` to the user's `roles` set.
    - Save the user using `userRepository.save(user)`.
-5. Restart the app and verify the user is created in the database (you can check via Docker: `docker exec -it product-db psql -U postgres -d product_db -c "SELECT * FROM users;"`).
+5. Restart the app and check pgAdmin to see the new user!
 
 ---
 
 ## 🧠 Quiz
 
-1. What is the difference between **Authentication** and **Authorization**?
+1. In plain English, what is the difference between Authentication and Authorization?
 2. Why is a Hash function called a "one-way" process?
 3. Why does BCrypt generate a **different** hash string every time we hash the exact same password?
-4. In the `User` entity, why did we use `FetchType.EAGER` for the `roles` collection, but `FetchType.LAZY` for the `category` in the `Product` entity?
 
 ---
 
 ## 🛑 STOP
 
-**Do not move forward.** 
-
 Reply with:
-1. Confirmation that you added Spring Security, ran the migrations, and saw the BCrypt hash in the console.
-2. Your code for the **Exercise** (Repositories and saving the admin user).
-3. Your answers to the 4 quiz questions.
+1. Confirmation that you saw the BCrypt test print in the console.
+2. Your code for the Exercise (Repositories and saving the admin user).
+3. Your answers to the 3 quiz questions.
 
-Once you reply, we will move to **Phase 4, Lesson 2: Building the Registration and Login Endpoints**, where we will finally allow users to sign up and log in!
+Once you reply, we will move to **Phase 4, Lesson 2: The Security Filter Chain & UserDetailsService**, where we teach Spring how to actually log users in!
